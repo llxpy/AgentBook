@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""antnest-web 端到端冒烟测试。
+"""AgentBook 端到端冒烟测试。
 
 分两层：
   A. HTTP 层：启动服务 → 登录/会话/SSE 流程（mock 模式，不依赖外部 LLM）。

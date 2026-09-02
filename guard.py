@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""antnest-web · 命令护栏（自然语言控制 Linux 的安全边界）。
+"""AgentBook · 命令护栏（自然语言控制 Linux 的安全边界）。
 
 原则（对齐《deb_rpm 安装包修改工具横评》第 9 章）：
 - 绝不允许"裸 Shell 自由拼接"执行未知命令：命令由 Agent 显式构造为完整字符串，

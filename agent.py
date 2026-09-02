@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""antnest-web · Agent 循环 + OpenAI 兼容 LLM 客户端。
+"""AgentBook · Agent 循环 + OpenAI 兼容 LLM 客户端。
 
 - 支持任意 OpenAI 兼容端点（DeepSeek / 本地 vLLM / Ollama 等）。
 - 工具调用循环：assistant 返回 tool_calls → 执行 → 回灌 → 继续，直到给出最终答案。
@@ -49,7 +49,7 @@ def _llm_chat(cfg: dict, messages: list, stream: bool = False):
         url, data=data,
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {key}",
-                 "User-Agent": "antnest-web"},
+                 "User-Agent": "agentbook"},
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -69,7 +69,7 @@ def _llm_get(cfg: dict, path: str, timeout: int = 20):
     url = f"{base}/{path.lstrip('/')}"
     req = urllib.request.Request(
         url,
-        headers={"Authorization": f"Bearer {key}", "User-Agent": "antnest-web"},
+        headers={"Authorization": f"Bearer {key}", "User-Agent": "agentbook"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -119,7 +119,7 @@ def test_connection(cfg: dict) -> dict:
         url, data=data,
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {key}",
-                 "User-Agent": "antnest-web"},
+                 "User-Agent": "agentbook"},
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:

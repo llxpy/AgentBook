@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""antnest-web · 工具层（自然语言控制 Linux 的能力本体）。
+"""AgentBook · 工具层（自然语言控制 Linux 的能力本体）。
 
 对齐《deb_rpm 安装包修改工具横评》第 7 章白名单动作 + 风险等级：
   L1  package.inspect / system.info         只读
@@ -338,7 +338,7 @@ def repack_deb(src: str, output: str, patch_dir: str = "", control_patch: str = 
             res = {"status": "error",
                    "error": "宿主机无 dpkg-deb，且无容器运行时(podman/docker)。"
                             "Alpine 上请 `apk add podman` 后让 Agent 在 Debian 容器内改包，"
-                            "或把 antnest-web 直接装到 Debian 系 VM。"}
+                            "或把 AgentBook 直接装到 Debian 系 VM。"}
     _audit("pkg_repack_deb", {"src": src, "output": output, "conflict_policy": conflict_policy}, res)
     return res
 
@@ -400,7 +400,7 @@ def repack_rpm(src: str, output: str, patch_dir: str = "", spec_patch: str = "",
             res = {"status": "error",
                    "error": "宿主机无 rpmrebuild，且无容器运行时(podman/docker)。"
                             "Alpine 上请 `apk add podman` 后让 Agent 在 RHEL 容器内改包，"
-                            "或把 antnest-web 直接装到 RHEL 系 VM。"}
+                            "或把 AgentBook 直接装到 RHEL 系 VM。"}
     _audit("pkg_repack_rpm", {"src": src, "output": output, "conflict_policy": conflict_policy}, res)
     return res
 

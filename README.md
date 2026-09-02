@@ -1,4 +1,4 @@
-# antnest-web · Linux 运维 Agent 控制服务
+# AgentBook · Linux 运维 Agent 控制服务
 
 一台**独立 Linux VM**，开机自启一个服务；Win 浏览器用 `IP:端口` 登录后，看到
 **对话页 + 状态页**，配好 API 后用自然语言直接控制这台 Linux。与本地 AntNest 无关，
@@ -29,8 +29,8 @@
 `0.0.0.0:8080`，浏览器用 `IP:端口` 直接进。
 
 ```bash
-git clone <你的仓库地址> antnest-web
-cd antnest-web
+git clone <你的仓库地址> AgentBook
+cd AgentBook
 sudo ./install.sh                          # 装 python3 + 注册开机自启 + 启动
 # 想非交互指定首次登录密码：
 sudo ./install.sh --password 你的密码
@@ -48,7 +48,7 @@ AN_AGENT_PASSWORD=你的密码 sudo -E ./install.sh
 ## 本地开发运行（任意有 Python3 的机器）
 
 ```bash
-cd antnest-web
+cd AgentBook
 python3 server.py
 # 打开 http://127.0.0.1:8080/ ；未配 API Key 时自动进入演示模式
 ```
@@ -63,18 +63,18 @@ python3 server.py
 1. 用 `alpine-virt` ISO 起 VM，`setup-alpine` 选 `sys` 安装到磁盘。
 2. 把本项目拷进 VM（U 盘 / scp / HTTP）。
 3. 在 VM 内运行：`sh service/install.sh`
-4. 浏览器开 `http://<VM的IP>:8080/`，密码见 `tail -n 20 /var/log/antnest-web.log`。
+4. 浏览器开 `http://<VM的IP>:8080/`，密码见 `tail -n 20 /var/log/agentbook.log`。
 
 `install.sh` 是通用安装器（见上方「通用 Linux 安装」），在 Alpine 上自动识别
-`apk` + OpenRC：装 python3、把应用放到 `/opt/antnest-web`、注册 OpenRC 服务
-`antnest-web`（开机自启）、立即启动。
+`apk` + OpenRC：装 python3、把应用放到 `/opt/agentbook`、注册 OpenRC 服务
+`agentbook`（开机自启）、立即启动。
 
 ### 方式 B：一键烧录（需本机有虚拟化）
 
 ```bash
-bash build/build_alpine_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso antnest-web-vm
-# 产出 antnest-web-vm.qcow2，启动：
-qemu-system-x86_64 -m 1024 -nographic -hda antnest-web-vm.qcow2 \
+bash build/build_alpine_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso agentbook-vm
+# 产出 agentbook-vm.qcow2，启动：
+qemu-system-x86_64 -m 1024 -nographic -hda agentbook-vm.qcow2 \
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0
 ```
 > 烧录脚本用 serial 喂安装命令（best-effort）。若 live 镜像不自动 root 登录，按提示手动补命令即可。
@@ -82,15 +82,15 @@ qemu-system-x86_64 -m 1024 -nographic -hda antnest-web-vm.qcow2 \
 ### 方式 C：VMware（无需 QEMU，推荐 VMware 用户）
 
 ```bash
-bash build/vmware/build_vmware_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso antnest-web-vm
-# 产出 build/vmware/antnest-web-vm/ ：
-#   antnest-web-vm.vmx        VMware 打开这个
-#   antnest-web-vm.vmdk       虚拟磁盘（本机有 qemu-img/vmware-vdiskmanager 则自动建；否则 VMware 里点一下「添加硬盘」）
-#   antnest-web-config.iso    配置光盘（answerfile + firstboot + 应用包），已挂在 ide1:1
+bash build/vmware/build_vmware_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso agentbook-vm
+# 产出 build/vmware/agentbook-vm/ ：
+#   agentbook-vm.vmx        VMware 打开这个
+#   agentbook-vm.vmdk       虚拟磁盘（本机有 qemu-img/vmware-vdiskmanager 则自动建；否则 VMware 里点一下「添加硬盘」）
+#   agentbook-config.iso    配置光盘（answerfile + firstboot + 应用包），已挂在 ide1:1
 ```
 
 **使用步骤**：
-1. VMware 打开 `antnest-web-vm.vmx`（提示升级/转换按默认）。
+1. VMware 打开 `agentbook-vm.vmx`（提示升级/转换按默认）。
 2. 首次开机：空磁盘回落到 CD-ROM 启动 Alpine live；没自动进就在开机瞬间按 ESC 选 CD-ROM。
    live 环境 `login:` 直接回车进 root。
 3. 控制台执行一次（自动装系统 + 拷应用 + 注册开机自启服务，然后关机）：
@@ -98,23 +98,23 @@ bash build/vmware/build_vmware_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso antn
    sh /media/cdrom1/FIRSTBOO.SH     # 路径不对就试 /dev/sr1、/dev/cdrom1、/media/cdrom
    ```
 4. 关机后，VMware「虚拟机设置」里移除两张 ISO（或断开连接）。
-5. 重新开机 → 从磁盘启动，浏览器开 `http://<VM的IP>:8080/`，首次密码见 VM 内 `/var/log/antnest-web.log`。
+5. 重新开机 → 从磁盘启动，浏览器开 `http://<VM的IP>:8080/`，首次密码见 VM 内 `/var/log/agentbook.log`。
 
 > 配置光盘是**纯 Python 生成的 ISO9660**（`build/vmware/mkiso.py`，零三方依赖），
-> 内装 `FIRSTBOO.SH`（一键装机脚本）、`ANSWER.TXT`（手动 `setup-alpine` 应答文件）、`ANTNEST.TGZ`（应用包）。
+> 内装 `FIRSTBOO.SH`（一键装机脚本）、`ANSWER.TXT`（手动 `setup-alpine` 应答文件）、`AGENTBOOK.TGZ`（应用包）。
 
 **配置盘挂不上时的可靠兜底（HTTP）**：VMware 对第二张 IDE 光驱识别有时不稳定，
-可改用宿主 HTTP 把文件喂进 VM（`FIRSTBOO.SH` / `ANTNEST.TGZ` 已落盘到 VM 目录）：
+可改用宿主 HTTP 把文件喂进 VM（`FIRSTBOO.SH` / `AGENTBOOK.TGZ` 已落盘到 VM 目录）：
 1. 宿主（Win）起服务：
    ```bat
-   cd E:\Linux_Agent\antnest-web\build\vmware\antnest-web-vm
+   cd E:\Linux_Agent\AgentBook\build\vmware\agentbook-vm
    python3 -m http.server 8000
    ```
 2. VM 里先确认有网（VMware NAT 下自动拿 DHCP）；没有就 `udhcpc -i eth0`，再 `ip route` 看网关即宿主 IP。
 3. VM 控制台：
    ```sh
    wget http://<宿主IP>:8000/FIRSTBOO.SH -O /tmp/fb.sh
-   sh /tmp/fb.sh http://<宿主IP>:8000      # 脚本会从此地址拉 ANTNEST.TGZ
+   sh /tmp/fb.sh http://<宿主IP>:8000      # 脚本会从此地址拉 AGENTBOOK.TGZ
    ```
    后续同方式 C 步骤 4–5（移除 ISO、重启、浏览器访问）。
 
@@ -137,7 +137,7 @@ Alpine **仓库没有** `dpkg-dev` / `rpmrebuild`。Agent 仍能在 Alpine 上�
 `AN_IMG_RPM`（默认 `rockylinux:9`）。
 
 > 推荐落地：Alpine VM 里 `apk add podman` 一次，后续所有改包都走路径 2，无需换发行版。
-> 若图省事，直接把 antnest-web 装进 Debian / RHEL 系 VM，走路径 1。
+> 若图省事，直接把 AgentBook 装进 Debian / RHEL 系 VM，走路径 1。
 
 ## 安全边界（对齐研究第 9 章）
 
@@ -150,7 +150,7 @@ Alpine **仓库没有** `dpkg-dev` / `rpmrebuild`。Agent 仍能在 Alpine 上�
 ## 文件结构
 
 ```
-antnest-web/
+AgentBook/
   server.py        HTTP 服务启动器（PHtmlWin 通用面板，绑 0.0.0.0:8080）
   agent.py         Agent 循环 + OpenAI 兼容 LLM 客户端（含 mock 模式）
   tools.py         工具集 + 护栏注册表 + OpenAI function schema
@@ -159,7 +159,7 @@ antnest-web/
   panel.py         AgentPanel（ui.* DSL 描述界面 + @route 绑定事件，暗面构建主题）
   phtmlwin.py      PHtmlWin（vendored：浏览器回退模式，零三方依赖）
   service/install.sh        通用安装器（apt/dnf/yum/apk/pacman + systemd/OpenRC）
-  service/antnest-web       OpenRC 服务单元（Alpine 用）
+  service/agentbook       OpenRC 服务单元（Alpine 用）
   build/build_alpine_vm.sh  烧录脚本（QEMU，ISO → qcow2）
   build/vmware/         VMware 构建套件（无需 QEMU）：
     build_vmware_vm.sh  生成 .vmx + 配置 ISO（+ 自动建 vmdk）
@@ -168,7 +168,7 @@ antnest-web/
     answerfile          setup-alpine 手动应答文件
   smoke_test.py         端到端冒烟测试（HTTP 层 + 工具层，mock 模式免 Key）
 ```
-> systemd 单元 `/etc/systemd/system/antnest-web.service` 由 `install.sh` 运行时生成
+> systemd 单元 `/etc/systemd/system/agentbook.service` 由 `install.sh` 运行时生成
 > （写入解析后的 python3 绝对路径），不进仓库，避免路径漂移。
 
 ## 自测

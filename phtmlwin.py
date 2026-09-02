@@ -331,7 +331,7 @@ class Win:
         self._window = None
         self._is_admin = False        # 管理员模式标记（用于 IME 修复）
         self._minimize_on_close = True  # 点 × 时隐藏主窗并显示迷你面板（而非退出）
-        # 浏览器模式绑定地址（antnest-web：0.0.0.0:8080 供跨机访问）
+        # 浏览器模式绑定地址（agentbook：0.0.0.0:8080 供跨机访问）
         self._host = host
         self._port = port
         # 浏览器模式鉴权钩子（可选）：

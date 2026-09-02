@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""antnest-web · 启动器（PHtmlWin 通用面板）。
+"""AgentBook · 启动器（PHtmlWin 通用面板）。
 
 - AgentPanel 用 ui.* DSL 描述界面、@route 绑定事件、app.update 实时刷新，
   与 AntNest 面板同款写法。
@@ -26,7 +26,7 @@ def main():
         try:
             config_mod.set_password(new_pw)
             print(f"✅ 登录密码已更新为：{new_pw}")
-            print("   重启服务后生效：rc-service antnest-web restart")
+            print("   重启服务后生效：rc-service agentbook restart")
         except Exception as e:  # noqa
             print(f"❌ 设置失败：{e}")
             sys.exit(1)
@@ -42,12 +42,12 @@ def main():
     app._port = port
 
     print("=" * 64, flush=True)
-    print("  Agent 面板 · 在暗面构建", flush=True)
+    print("  AgentBook 面板 · 在暗面构建", flush=True)
     print(f"  监听: http://{host}:{port}/", flush=True)
     print(f"  首次登录密码: {pw}", flush=True)
     print("  配置 LLM API 后即可用自然语言控制这台 Linux。", flush=True)
     print("  想自定义密码？控制台执行：", flush=True)
-    print("    python3 /opt/antnest-web/server.py --set-password 你的密码", flush=True)
+    print("    python3 /opt/agentbook/server.py --set-password 你的密码", flush=True)
     print("=" * 64, flush=True)
     app.run()
 

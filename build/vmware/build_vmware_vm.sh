@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# antnest-web · VMware 构建脚本（无需 QEMU）
+# AgentBook · VMware 构建脚本（无需 QEMU）
 #
 # 产出：一个可直接用 VMware Workstation/Player 打开的虚拟机目录，内含
 #   - <name>.vmx              虚拟机定义
 #   - <name>.vmdk             虚拟磁盘（若本机有 qemu-img / vmware-vdiskmanager 则自动建；否则给指引）
-#   - antnest-web-config.iso  配置光盘（answerfile + firstboot + 应用包），VM 内挂载即用
+#   - agentbook-config.iso  配置光盘（answerfile + firstboot + 应用包），VM 内挂载即用
 #
 # 前置（尽量自动探测）：
 #   - bash / python3（生成 ISO，纯标准库）
@@ -17,13 +17,13 @@
 set -e
 
 ISO="${1:-alpine-virt-3.24.1-x86_64.iso}"
-NAME="${2:-antnest-web-vm}"
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"     # antnest-web/
+NAME="${2:-agentbook-vm}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"     # agentbook/
 HERE="$(cd "$(dirname "$0")" && pwd)"           # build/vmware/
 OUT="$HERE/$NAME"
 VMDK="$OUT/$NAME.vmdk"
 VMX="$OUT/$NAME.vmx"
-CONFIG_ISO="$OUT/antnest-web-config.iso"
+CONFIG_ISO="$OUT/agentbook-config.iso"
 DISKSIZE=8G
 PY="${PY:-python3}"
 
@@ -32,21 +32,21 @@ PY="${PY:-python3}"
 echo "[vmware] 输出目录: $OUT"
 mkdir -p "$OUT"
 
-echo "[vmware] 打包应用 → ANTNEST.TGZ"
+echo "[vmware] 打包应用 → AGENTBOOK.TGZ"
 TMP="$OUT/.build-tmp"            # 放 POSIX 路径下，避免 mktemp 返回 C: 盘符导致 tar 误判为远程归档
 rm -rf "$TMP"; mkdir -p "$TMP"
-tar czf "$TMP/ANTNEST.TGZ" -C "$ROOT" server.py config.py guard.py tools.py agent.py frontend service
+tar czf "$TMP/AGENTBOOK.TGZ" -C "$ROOT" server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py service
 
 echo "[vmware] 组装配置光盘内容"
 STAGING="$TMP/staging"
 mkdir -p "$STAGING"
 cp "$HERE/answerfile"   "$STAGING/ANSWER.TXT"
 cp "$HERE/firstboot.sh" "$STAGING/FIRSTBOO.SH"
-cp "$TMP/ANTNEST.TGZ"   "$STAGING/ANTNEST.TGZ"
+cp "$TMP/AGENTBOOK.TGZ"   "$STAGING/AGENTBOOK.TGZ"
 
-# 同时把 FIRSTBOO.SH 与 ANTNEST.TGZ 落盘到 VM 目录，方便用 HTTP 兜底喂进 VM
+# 同时把 FIRSTBOO.SH 与 AGENTBOOK.TGZ 落盘到 VM 目录，方便用 HTTP 兜底喂进 VM
 cp "$HERE/firstboot.sh" "$OUT/FIRSTBOO.SH"
-cp "$TMP/ANTNEST.TGZ"   "$OUT/ANTNEST.TGZ"
+cp "$TMP/AGENTBOOK.TGZ"   "$OUT/AGENTBOOK.TGZ"
 
 echo "[vmware] 生成配置 ISO（纯 Python ISO9660）"
 # 调 native Python 时把 POSIX 路径转成 Windows 路径（避免 /e/... 被当成相对盘符）
@@ -110,7 +110,7 @@ ide1:0.present = "TRUE"
 ide1:0.fileName = "$ISO_ABS"
 ide1:0.deviceType = "cdrom-image"
 ide1:1.present = "TRUE"
-ide1:1.fileName = "antnest-web-config.iso"
+ide1:1.fileName = "agentbook-config.iso"
 ide1:1.deviceType = "cdrom-image"
 ethernet0.present = "TRUE"
 ethernet0.connectionType = "nat"
@@ -132,7 +132,7 @@ echo ""
 echo "✅ 成品目录: $OUT"
 echo "   ├─ $NAME.vmx               （VMware 打开这个）"
 echo "   ├─ $NAME.vmdk              （虚拟磁盘，若上面跳过了请手动建）"
-echo "   └─ antnest-web-config.iso  （配置光盘，已挂在 ide1:1）"
+echo "   └─ agentbook-config.iso  （配置光盘，已挂在 ide1:1）"
 echo ""
 echo "=== 使用步骤 ==="
 echo "1) VMware 打开 $VMX（若提示升级/转换，按默认即可）。"
@@ -144,4 +144,4 @@ echo "   （路径不对就试 /dev/sr1、/dev/cdrom1、/media/cdrom）"
 echo "   脚本会自动装系统 + 拷应用 + 注册开机自启服务，然后关机。"
 echo "4) 关机后，VMware『虚拟机设置』里移除两张 ISO（或断开连接）。"
 echo "5) 重新开机 → 从磁盘启动，浏览器开 http://<VM的IP>:8080/"
-echo "   首次登录密码见 VM 内 /var/log/antnest-web.log"
+echo "   首次登录密码见 VM 内 /var/log/agentbook.log"

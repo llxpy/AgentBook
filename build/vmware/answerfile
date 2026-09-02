@@ -1,9 +1,9 @@
-# antnest-web · setup-alpine 应答文件（手动兜底用）
+# AgentBook · setup-alpine 应答文件（手动兜底用）
 # 若不想用 FIRSTBOO.SH 一键装机，可在 live 环境里：
 #   setup-alpine -c /media/cdrom1/ANSWER.TXT
-# 装完基础系统后再手动： tar xzf /media/cdrom1/ANTNEST.TGZ -C /opt/antnest-web && sh /opt/antnest-web/service/install.sh
+# 装完基础系统后再手动： tar xzf /media/cdrom1/AGENTBOOK.TGZ -C /opt/agentbook && sh /opt/agentbook/service/install.sh
 KEYMAPOPTS="us us"
-HOSTNAMEOPTS="antnest-web"
+HOSTNAMEOPTS="agentbook"
 INTERFACESOPTS="auto lo
 iface lo inet loopback
 

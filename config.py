@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""antnest-web · 配置层（LLM 配置 + API Key 分离存储）。
+"""AgentBook · 配置层（LLM 配置 + API Key 分离存储）。
 
 设计：
 - config.json 只存非敏感项（base_url / model / 开关），保持嵌套形状简单。

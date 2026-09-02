@@ -2,7 +2,7 @@
 """mkiso.py · 纯 Python 生成 ISO9660 Level 1 光盘镜像（零三方依赖）。
 
 仅放扁平文件（8.3 文件名，无 Rock Ridge），足够给 Alpine live 当配置光盘用：
-挂载后能看到 ANSWER.TXT / FIRSTBOO.SH / ANTNEST.TGZ。
+挂载后能看到 ANSWER.TXT / FIRSTBOO.SH / AGENTBOOK.TGZ。
 
 用法：
     python3 mkiso.py <输出.iso> <源目录>
@@ -89,8 +89,8 @@ def build_iso(files: dict, out_path: str):
     pvd[1:6] = b"CD001"
     pvd[6] = 0x01
     pvd[7] = 0x00
-    pvd[8:40] = b"ANTNESTWEB" + b" " * 24      # 系统标识符
-    pvd[40:72] = b"ANTNESTWEB" + b" " * 24     # 卷标识符
+    pvd[8:40] = b"AGENTBOOK" + b" " * 24      # 系统标识符
+    pvd[40:72] = b"AGENTBOOK" + b" " * 24     # 卷标识符
     # 72:8 保留
     pvd[80:84] = total_sectors.to_bytes(4, "little")   # 卷空间大小 LE
     pvd[84:88] = total_sectors.to_bytes(4, "big")      # 卷空间大小 BE

@@ -1,10 +1,10 @@
 #!/sbin/openrc-run
-# Alpine OpenRC 服务单元：antnest-web
-# 安装后由 install.sh 执行 `rc-update add antnest-web default` 开机自启。
-name="antnest-web"
+# Alpine OpenRC 服务单元：agentbook
+# 安装后由 install.sh 执行 `rc-update add agentbook default` 开机自启。
+name="agentbook"
 description="AntNest Web · Linux 运维 Agent 控制服务（浏览器访问 :8080）"
 command="/usr/bin/python3"
-command_args="-u /opt/antnest-web/server.py"
+command_args="-u /opt/agentbook/server.py"
 command_background="yes"
 pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/${RC_SVCNAME}.log"

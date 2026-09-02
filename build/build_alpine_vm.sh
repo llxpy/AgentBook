@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# antnest-web · 烧录脚本（best-effort，需在本机有虚拟化的 Linux 上运行）
+# AgentBook · 烧录脚本（best-effort，需在本机有虚拟化的 Linux 上运行）
 #
-# 作用：把 antnest-web 应用烧进 alpine-virt ISO，产出一块可启动 qcow2 磁盘。
+# 作用：把 AgentBook 应用烧进 alpine-virt ISO，产出一块可启动 qcow2 磁盘。
 # 两块磁盘 = 两个阶段：
 #   阶段1  boot live ISO  →  setup-alpine 装到磁盘
 #   阶段2  boot 磁盘      →  拉取 app.tgz + 跑 install.sh（开机自启服务）
@@ -15,7 +15,7 @@
 set -e
 
 ISO="${1:-alpine-virt-3.24.1-x86_64.iso}"
-NAME="${2:-antnest-web-vm}"
+NAME="${2:-agentbook-vm}"
 DISK="${NAME}.qcow2"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RAM=1024
@@ -27,7 +27,7 @@ command -v "$QEMU" >/dev/null 2>&1 || { echo "未找到 $QEMU，请先安装 QEM
 
 echo "[build] 打包应用 → app.tgz"
 TMP="$(mktemp -d)"
-tar czf "$TMP/app.tgz" -C "$ROOT" server.py config.py guard.py tools.py agent.py frontend service
+tar czf "$TMP/app.tgz" -C "$ROOT" server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py service
 
 echo "[build] 创建磁盘 $DISK (8G)"
 qemu-img create -f qcow2 "$DISK" 8G >/dev/null
@@ -38,7 +38,7 @@ cat > "$TMP/phase1.txt" <<'EOF'
 sleep 1
 cat > /tmp/ans.cfg <<'ANS'
 KEYMAPOPTS="us us"
-HOSTNAMEOPTS="antnest-web"
+HOSTNAMEOPTS="agentbook"
 INTERFACESOPTS="auto lo
 iface lo inet loopback
 
@@ -72,8 +72,8 @@ root
 sleep 2
 apk add --no-cache python3 wget
 wget -q http://10.0.2.2:$PORT/app.tgz -O /tmp/app.tgz
-mkdir -p /opt/antnest-web && tar xzf /tmp/app.tgz -C /opt/antnest-web
-sh /opt/antnest-web/service/install.sh
+mkdir -p /opt/agentbook && tar xzf /tmp/app.tgz -C /opt/agentbook
+sh /opt/agentbook/service/install.sh
 poweroff
 EOF
 "$QEMU" -m "$RAM" -nographic -hda "$DISK" -boot c \
@@ -85,4 +85,4 @@ rm -rf "$TMP"
 echo ""
 echo "✅ 成品磁盘: $(pwd)/$DISK"
 echo "   启动: $QEMU -m $RAM -nographic -hda $DISK -netdev user,id=n0 -device virtio-net-pci,netdev=n0"
-echo "   启动后浏览器访问 http://<VM的IP>:8080/ ，首次登录密码见 /var/log/antnest-web.log"
+echo "   启动后浏览器访问 http://<VM的IP>:8080/ ，首次登录密码见 /var/log/agentbook.log"

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""antnest-web · AgentPanel（PHtmlWin 通用面板组件）。
+"""AgentBook · AgentPanel（PHtmlWin 通用面板组件）。
 
 和 AntNest 的面板同款写法：ui.* DSL 描述界面 + @app.route 绑定事件 +
 app.update(selector, html) 实时刷新。暗面构建设计 token 内联，VM 自包含、零三方依赖。
@@ -507,7 +507,7 @@ class AgentPanel:
 
     # ============================================================ 构建
     def build_app(self) -> Win:
-        app = Win(title="Agent 面板 · 在暗面构建", width=1180, height=780,
+        app = Win(title="AgentBook 面板 · 在暗面构建", width=1180, height=780,
                   backend="browser", host="0.0.0.0", port=8080)
         self.APP = app
         app.css(CSS)
@@ -530,7 +530,7 @@ class AgentPanel:
                 ui.div(cls="brand")[
                     ui.span("🐜", cls="logo"),
                     ui.div()[
-                        ui.h1("Agent 面板"),
+                        ui.h1("AgentBook 面板"),
                         ui.small("在暗面构建 · 自然语言控制这台 Linux"),
                     ],
                 ],
@@ -607,15 +607,15 @@ class AgentPanel:
                 ui.div(id="cfg-msg", cls="cfg-msg"),
                 ui.div(cls="hint")[
                     "想自定义登录密码？在 VM 控制台执行：", ui.br(),
-                    "python3 /opt/antnest-web/server.py --set-password 你的密码", ui.br(),
-                    "重启服务后生效：rc-service antnest-web restart",
+                    "python3 /opt/agentbook/server.py --set-password 你的密码", ui.br(),
+                    "重启服务后生效：rc-service agentbook restart",
                 ],
             ],
             # 登录遮罩
             ui.div(id="login-overlay", cls="overlay")[
                 ui.div(cls="login-card")[
                     ui.div(cls="lk")["🐜"],
-                    ui.h2("Agent 面板"),
+                    ui.h2("AgentBook 面板"),
                     ui.p("输入控制台密码登录"),
                     ui.input(id="login-pw", type="password", placeholder="密码"),
                     ui.button("登录", cls="primary",
