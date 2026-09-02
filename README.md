@@ -158,7 +158,7 @@ python3 server.py        # 打开 http://127.0.0.1:8080/ ；未配 Key 自动演
 ### 嵌入 Alpine VM（进阶）
 
 把 AgentBook 烧进一台独立 Alpine VM，开机即从磁盘起、自动跑服务。
-**方式 A 手动**：alpine-virt ISO 起 VM → `setup-alpine` 装到磁盘 → 拷项目进 VM → `sh service/install.sh`。
+**方式 A 手动**：alpine-virt ISO 起 VM → `setup-alpine` 装到磁盘 → 拷项目进 VM → `sh install.sh`。
 **方式 B 一键烧录**（需本机有 QEMU）：`bash build/build_alpine_vm.sh <alpine-virt.iso> agentbook-vm`，产出 qcow2。
 **方式 C VMware**（无需 QEMU）：`bash build/vmware/build_vmware_vm.sh <alpine-virt.iso> agentbook-vm`，
 产出 `.vmx` + 配置 ISO；VMware 打开 `.vmx` → 首启从 CD-ROM 进 live → `sh /media/cdrom1/FIRSTBOO.SH` 一键装机 →
@@ -235,7 +235,7 @@ AgentBook/
   panel.py         AgentPanel（ui.* DSL 描述界面 + @route 绑定事件，暗面构建主题）
   i18n.py          中英双语字典（69 key 对齐）+ 供应商预设 + 示例提示
   phtmlwin.py      PHtmlWin（vendored：浏览器回退模式，零三方依赖）
-  service/install.sh        通用安装器（apt/dnf/yum/apk/pacman + systemd/OpenRC）
+  install.sh                通用安装器（apt/dnf/yum/apk/pacman + systemd/OpenRC）
   service/agentbook       OpenRC 服务单元（Alpine 用）
   build/build_alpine_vm.sh  烧录脚本（QEMU，ISO → qcow2）
   build/vmware/         VMware 构建套件（无需 QEMU）：build_vmware_vm.sh / mkiso.py / firstboot.sh / answerfile

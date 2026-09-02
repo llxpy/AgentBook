@@ -35,7 +35,7 @@ mkdir -p "$OUT"
 echo "[vmware] 打包应用 → AGENTBOOK.TGZ"
 TMP="$OUT/.build-tmp"            # 放 POSIX 路径下，避免 mktemp 返回 C: 盘符导致 tar 误判为远程归档
 rm -rf "$TMP"; mkdir -p "$TMP"
-tar czf "$TMP/AGENTBOOK.TGZ" -C "$ROOT" server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py service
+tar czf "$TMP/AGENTBOOK.TGZ" -C "$ROOT" server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py i18n.py install.sh service
 
 echo "[vmware] 组装配置光盘内容"
 STAGING="$TMP/staging"

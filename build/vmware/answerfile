@@ -1,7 +1,7 @@
 # AgentBook · setup-alpine 应答文件（手动兜底用）
 # 若不想用 FIRSTBOO.SH 一键装机，可在 live 环境里：
 #   setup-alpine -c /media/cdrom1/ANSWER.TXT
-# 装完基础系统后再手动： tar xzf /media/cdrom1/AGENTBOOK.TGZ -C /opt/agentbook && sh /opt/agentbook/service/install.sh
+# 装完基础系统后再手动： tar xzf /media/cdrom1/AGENTBOOK.TGZ -C /opt/agentbook && sh /opt/agentbook/install.sh
 KEYMAPOPTS="us us"
 HOSTNAMEOPTS="agentbook"
 INTERFACESOPTS="auto lo

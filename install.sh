@@ -13,7 +13,7 @@
 #   - 服务 Restart=always（systemd）/ 默认级（OpenRC），崩溃自动拉起。
 set -e
 
-SRC="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="$(cd "$(dirname "$0")" && pwd)"
 DEST=/opt/agentbook
 PORT="${AN_WEB_PORT:-8080}"
 
@@ -60,7 +60,7 @@ echo "      使用 python3: $PY"
 echo "[3/6] 拷贝应用到 $DEST …"
 rm -rf "$DEST"
 mkdir -p "$DEST"
-(cd "$SRC" && tar cf - server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py service) \
+(cd "$SRC" && tar cf - server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py i18n.py service) \
   | tar xf - -C "$DEST"
 mkdir -p "$DEST/state"
 

@@ -27,7 +27,7 @@ command -v "$QEMU" >/dev/null 2>&1 || { echo "未找到 $QEMU，请先安装 QEM
 
 echo "[build] 打包应用 → app.tgz"
 TMP="$(mktemp -d)"
-tar czf "$TMP/app.tgz" -C "$ROOT" server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py service
+tar czf "$TMP/app.tgz" -C "$ROOT" server.py config.py guard.py tools.py agent.py phtmlwin.py panel.py i18n.py install.sh service
 
 echo "[build] 创建磁盘 $DISK (8G)"
 qemu-img create -f qcow2 "$DISK" 8G >/dev/null
@@ -73,7 +73,7 @@ sleep 2
 apk add --no-cache python3 wget
 wget -q http://10.0.2.2:$PORT/app.tgz -O /tmp/app.tgz
 mkdir -p /opt/agentbook && tar xzf /tmp/app.tgz -C /opt/agentbook
-sh /opt/agentbook/service/install.sh
+sh /opt/agentbook/install.sh
 poweroff
 EOF
 "$QEMU" -m "$RAM" -nographic -hda "$DISK" -boot c \
