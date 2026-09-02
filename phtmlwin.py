@@ -1,0 +1,671 @@
+# -*- coding: utf-8 -*-
+"""
+PHtmlWin — 用写 HTML 的轻松感写 Python 桌面 UI。
+
+核心思路
+--------
+- 用一套 Pythonic 的元素 DSL（ui.div[ ui.h1("...") ]）描述界面，像写 HTML 一样直观。
+- 渲染成真实桌面窗口：优先用 pywebview（原生 OS webview，轻量）；
+  没有 pywebview 时自动回退到「标准库本地服务器 + 浏览器」，零三方依赖也能跑。
+- Python 侧可绑定事件（button 点击等）并实时改 DOM（app.update(selector, html)）。
+
+这不是从零造渲染引擎，而是把「HTML 字符串 / webview 窗口 / Python↔JS 桥」包成
+一层好用的 API。定位上对标 NiceGUI / Flet / Eel，但更轻、且默认带暗面构建设计 token。
+
+依赖
+----
+- 桌面窗口模式：pip install pywebview（可选，没有就走浏览器回退）。
+- 库本身 import 不依赖任何三方包；bridge / 服务器全用标准库。
+"""
+from __future__ import annotations
+
+import html as _html
+import json
+import threading
+import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+__all__ = ["El", "ui", "el", "Win"]
+
+
+def _parse_cookies(header: str) -> dict:
+    """把 'a=1; b=2' 形式的 Cookie 头解析成 dict。"""
+    out = {}
+    if not header:
+        return out
+    for part in header.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        out[k.strip()] = v.strip().strip('"')
+    return out
+
+
+# --------------------------------------------------------------------------
+# 元素 DSL
+# --------------------------------------------------------------------------
+class _Text:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def render(self) -> str:
+        return _html.escape(str(self.text))
+
+
+class El:
+    """一个 HTML 元素。支持 ui.div(cls="x")[ child, child ] 这种写法。"""
+
+    VOID = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+
+    def __init__(self, tag: str, **attrs) -> None:
+        self.tag = tag
+        self.attrs: dict = {}
+        self._bind = None  # (event, route)
+        self.children: list = []
+        for k, v in attrs.items():
+            if k == "cls":
+                self.attrs["class"] = v
+            elif k == "on" and isinstance(v, tuple) and len(v) == 2:
+                self._bind = v
+            elif k == "bind" and isinstance(v, tuple) and len(v) == 2:
+                self._bind = v
+            elif k == "onclick" and isinstance(v, str):
+                # 含 JS 调用语法 → 原生 onclick；简单标识符 → 走路由绑定
+                if any(c in v for c in "() ."):
+                    self.attrs["onclick"] = v
+                else:
+                    self._bind = ("click", v)
+            elif k == "oninput" and isinstance(v, str):
+                self._bind = ("input", v)
+            elif k == "onchange" and isinstance(v, str):
+                self._bind = ("change", v)
+            else:
+                self.attrs[k] = v
+
+    def __call__(self, *kids):
+        self.children.extend(kids)
+        return self
+
+    def __getitem__(self, kids):
+        if not isinstance(kids, tuple):
+            kids = (kids,)
+        self.children.extend(kids)
+        return self
+
+    def bind(self, event: str, route: str):
+        """显式绑定事件到已注册的 route。例：ui.button("Go").bind("click","start")"""
+        self._bind = (event, route)
+        return self
+
+    def render(self) -> str:
+        attrs = dict(self.attrs)
+        if self._bind:
+            ev, route = self._bind
+            attrs["data-phw-bind"] = f"{ev}:{route}"
+        attr_str = "".join(
+            f' {k}="{_html.escape(str(v), quote=True)}"' for k, v in attrs.items()
+        )
+        if self.tag in self.VOID:
+            return f"<{self.tag}{attr_str}/>"
+        inner = "".join(
+            c.render() if hasattr(c, "render") else _html.escape(str(c))
+            for c in self.children
+        )
+        return f"<{self.tag}{attr_str}>{inner}</{self.tag}>"
+
+
+def _mk(tag: str):
+    def factory(*children, **attrs):
+        e = El(tag, **attrs)
+        if children:
+            e(*children)
+        return e
+
+    factory.__name__ = tag
+    return factory
+
+
+class _UI:
+    TAGS = [
+        "div", "span", "section", "aside", "main", "header", "footer", "nav",
+        "h1", "h2", "h3", "h4", "p", "a", "button", "input", "img", "ul",
+        "ol", "li", "pre", "code", "label", "form", "small", "strong", "em",
+        "table", "tr", "td", "th", "br", "hr", "datalist", "option",
+    ]
+
+    def __getattr__(self, name: str):
+        if name in self.TAGS:
+            return _mk(name)
+        raise AttributeError(f"ui 没有标签 {name!r}")
+
+    def el(self, tag: str, **attrs) -> El:
+        """任意标签：ui.el('video', src='x.mp4')"""
+        return El(tag, **attrs)
+
+    def raw(self, html_str: str):
+        """直接塞原始 HTML（不经过转义）。"""
+
+        class _Raw:
+            def render(self) -> str:
+                return html_str
+
+        return _Raw()
+
+
+ui = _UI()
+
+
+def el(tag: str, **attrs) -> El:
+    """模块级快捷：el('video', src='x')"""
+    return El(tag, **attrs)
+
+
+# --------------------------------------------------------------------------
+# 桥接 JS（webview 模式 / 浏览器模式两种实现）
+# --------------------------------------------------------------------------
+_BRIDGE_TPL = """
+(function(){
+  var PHW = {
+    _q: [],
+    _ready: false,
+    route: function(name, data){
+      data = data || {};
+      {MODE_ROUTE}
+    },
+    _flush: function(){
+      PHW._ready = true;
+      var q = PHW._q; PHW._q = [];
+      q.forEach(function(a){ PHW.route(a[0], a[1]); });
+    }
+  };
+  // 对外暴露：页面里的自定义 JS 用 window.PHW.route(name, data)
+  window.PHW = PHW;
+  window.pybridge = PHW;   // 兼容旧写法
+  document.addEventListener('click', function(e){
+    var t = e.target.closest('[data-phw-bind]'); if(!t) return;
+    var p = (t.getAttribute('data-phw-bind')||'').split(':');
+    if(p[0] !== 'click') return;
+    PHW.route(p[1], {value: (t.value || t.textContent || '')});
+  });
+  ['input','change'].forEach(function(ev){
+    document.addEventListener(ev, function(e){
+      var t = e.target.closest('[data-phw-bind]'); if(!t) return;
+      var p = (t.getAttribute('data-phw-bind')||'').split(':');
+      if(p[0] !== ev) return;
+      PHW.route(p[1], {value: t.value});
+    }, true);
+  });
+  {SSE}
+})();
+"""
+
+_PAGE = """<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+{favicon}
+<style>
+{css}
+/* 管理员模式 IME 修复：确保输入法候选框能正常显示 */
+/* Windows UAC 提升后 WebView2 的 IME 候选窗可能被遮挡 */
+input, textarea, [contenteditable] {
+    ime-mode: active !important;
+    -webkit-ime-mode: active !important;
+    -ms-ime-mode: active !important;
+}
+/* 确保输入框不使用 z-index 遮挡 IME 窗口 */
+input:focus, textarea:focus {
+    z-index: auto !important;
+    position: relative !important;
+}
+/* 修复 WebView2 在管理员模式下的 IME 候选框位置 */
+@supports (-webkit-overflow-scrolling: touch) {
+    input, textarea {
+        -webkit-ime-mode: active;
+    }
+}
+</style>
+</head>
+<body>
+{body}
+<script>{bridge}</script>
+</body>
+</html>"""
+
+
+def _apply_window_icon(title, icon_path):
+    """窗口显示后把标题栏小图标 + 任务栏大图标设为应用图标。
+
+    不依赖 pywebview 版本：旧版 create_window 不支持 icon 参数，
+    窗口创建后通过 Windows API 直接设置（WM_SETICON）。
+    先按标题找窗口，失败则按当前进程找第一个顶层窗口。
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        import time as _t
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.restype = wt.HWND
+        user32.FindWindowW.argtypes = [wt.LPCWSTR, wt.LPCWSTR]
+        user32.EnumWindows.restype = wt.BOOL
+        _CBTYPE = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+        user32.EnumWindows.argtypes = [_CBTYPE, wt.LPARAM]
+        user32.GetWindowThreadProcessId.restype = wt.DWORD
+        user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+        user32.LoadImageW.restype = wt.HANDLE
+        user32.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT,
+                                      ctypes.c_int, ctypes.c_int, wt.UINT]
+        user32.SendMessageW.restype = wt.LPARAM
+        user32.SendMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+
+        pid = ctypes.windll.kernel32.GetCurrentProcessId()
+
+        def _find():
+            h = user32.FindWindowW(None, title)
+            if h:
+                return h
+            found = []
+
+            def _cb(hwnd, lparam):
+                wpid = wt.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+                if wpid.value == pid:
+                    found.append(hwnd)
+                    return False  # 停止枚举
+                return True
+
+            user32.EnumWindows(_CBTYPE(_cb), 0)
+            return found[0] if found else None
+
+        hwnd = None
+        for _ in range(100):  # 最多等 10s，窗口出现即设
+            hwnd = _find()
+            if hwnd:
+                break
+            _t.sleep(0.1)
+        if not hwnd:
+            return
+
+        IMAGE_ICON, LR_LOADFROMFILE = 1, 0x0010
+        WM_SETICON, ICON_SMALL, ICON_BIG = 0x0080, 0, 1
+        big = user32.LoadImageW(None, icon_path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+        small = user32.LoadImageW(None, icon_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+        if big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, big)
+        if small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, small)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------
+# Win —— 一个桌面窗口应用
+# --------------------------------------------------------------------------
+class Win:
+    def __init__(self, title: str = "PHtmlWin", width: int = 1000,
+                 height: int = 700, backend: str = None,
+                 icon: str = None, gui: str = None,
+                 favicon: str = None,
+                 host: str = "0.0.0.0", port: int = 8080) -> None:
+        self.title = title
+        self.width = width
+        self.height = height
+        self.icon = icon              # webview 窗口图标路径（.ico）
+        self.favicon = favicon       # 页面 favicon（data:URI 或地址），空则不输出
+        self._css = ""
+        self._body_children: list = []
+        self._routes: dict = {}
+        self._updates: list = []      # 浏览器模式下的 SSE 推送队列
+        self._backend = backend       # "webview" | "browser" | None(自动)
+        self._gui = gui               # pywebview 渲染后端：None=自动(Windows→edgechromium)
+                                       #   / "edgechromium"(WebView2) / "cef"(CEF，IME 候选窗可靠)
+        self._window = None
+        self._is_admin = False        # 管理员模式标记（用于 IME 修复）
+        self._minimize_on_close = True  # 点 × 时隐藏主窗并显示迷你面板（而非退出）
+        # 浏览器模式绑定地址（antnest-web：0.0.0.0:8080 供跨机访问）
+        self._host = host
+        self._port = port
+        # 浏览器模式鉴权钩子（可选）：
+        #   _public_routes: 不需登录的路由名集合
+        #   _auth_check(route_name, cookies_dict) -> bool：True 放行
+        #   set_cookie(token) / clear_cookie()：在路由内调用，下个响应写 Set-Cookie
+        self._public_routes: set = set()
+        self._auth_check = None
+        self._cookie_out = None
+        self._cookie_clear = False
+
+    # ---- 浏览器模式鉴权辅助 ----
+    def set_cookie(self, token: str) -> None:
+        """在路由内调用：让当前响应写 Set-Cookie: an_token=<token>。"""
+        self._cookie_out = token
+
+    def clear_cookie(self) -> None:
+        """在路由内调用：让当前响应清除 an_token。"""
+        self._cookie_clear = True
+
+    # ---- 窗口控制（webview 模式） ----
+    def show(self) -> None:
+        """重新显示主窗口（从小窗还原）。"""
+        if self._backend == "webview" and self._window is not None:
+            try:
+                self._window.show()
+            except Exception:
+                pass
+
+    def hide(self) -> None:
+        """隐藏主窗口（点 × 时调用，配合页面内迷你面板常驻）。"""
+        if self._backend == "webview" and self._window is not None:
+            try:
+                self._window.hide()
+            except Exception:
+                pass
+
+    # ---- 声明式 API ----
+    def css(self, css: str):
+        self._css += "\n" + css
+        return self
+
+    def body(self, *nodes):
+        self._body_children.extend(nodes)
+        return self
+
+    def route(self, name: str):
+        """装饰器：注册一个事件处理函数。@app.route("start") def f(data): ..."""
+        def deco(fn):
+            self._routes[name] = fn
+            return fn
+        return deco
+
+    def run_js(self, js: str):
+        """执行任意 JS（webview 模式丢独立线程；浏览器模式走 SSE 推送）。"""
+        if self._backend == "webview" and self._window is not None:
+            threading.Thread(
+                target=self._window.evaluate_js, args=(js,), daemon=True
+            ).start()
+        else:
+            self._updates.append(js)
+
+    def update(self, selector: str, html: str):
+        """实时把 selector 匹配元素的 innerHTML 替换为 html。"""
+        self.run_js(
+            f"(function(){{var el=document.querySelector({selector!r});"
+            f" if(el) el.innerHTML={html!r};}})()"
+        )
+
+    # ---- 渲染 ----
+    def _render_node(self, n):
+        if hasattr(n, "render"):
+            return n.render()
+        return _html.escape(str(n))
+
+    def render(self) -> str:
+        if self._backend is None:
+            self._backend = self._detect_backend()
+        body = "".join(self._render_node(n) for n in self._body_children)
+        page = _PAGE
+        favicon_html = (
+            f'<link rel="icon" href="{self.favicon}">'
+            if self.favicon else ""
+        )
+        page = (page.replace("{title}", self.title)
+                    .replace("{favicon}", favicon_html)
+                    .replace("{css}", self._css)
+                    .replace("{body}", body)
+                    .replace("{bridge}", self._bridge_js()))
+        return page
+
+    def _detect_backend(self) -> str:
+        try:
+            import webview  # noqa: F401
+            return "webview"
+        except Exception:
+            return "browser"
+
+    def _bridge_js(self) -> str:
+        mode = "webview" if self._backend == "webview" else "browser"
+        if mode == "webview":
+            # pywebview 把 js_api 暴露成 window.pywebview.api.<方法名>（异步注入，
+            # 页面刚加载时还不存在）。所以：没就绪先排队，pywebviewready 后统一冲刷。
+            route_impl = (
+                "if(window.pywebview && window.pywebview.api && window.pywebview.api.route){"
+                "  window.pywebview.api.route(name, data);"
+                "}else{"
+                "  PHW._q.push([name, data]);"
+                "}"
+            )
+            sse = ("window.addEventListener('pywebviewready', function(){ PHW._flush(); });"
+                   "if(window.pywebview && window.pywebview.api){ PHW._flush(); }")
+        else:
+            route_impl = (
+                "fetch('/api/route',{method:'POST',"
+                "headers:{'Content-Type':'application/json'},"
+                "credentials:'include',"
+                "body:JSON.stringify({route:name,data:data})})"
+                ".then(function(r){return r.json();})"
+                ".then(function(j){(j.updates||[]).forEach(function(u){eval(u);});});"
+            )
+            sse = ("var es=new EventSource('/api/events');"
+                   "es.onmessage=function(e){try{eval(e.data);}catch(_){}};")
+        return _BRIDGE_TPL.replace("{MODE_ROUTE}", route_impl).replace("{SSE}", sse)
+
+    # ---- 运行 ----
+    def run(self) -> None:
+        if self._backend is None:
+            self._backend = self._detect_backend()
+        if self._backend == "webview":
+            self._start_webview()
+        else:
+            self._start_browser()
+
+    def _start_webview(self) -> None:
+        import os
+        import webview
+
+        page = self.render()
+
+        class Bridge:
+            def __init__(self, app):
+                self.app = app
+
+            def route(self, name, data):
+                fn = self.app._routes.get(name)
+                if fn:
+                    fn(data)
+
+        kwargs = {"title": self.title, "html": page,
+                  "width": self.width, "height": self.height,
+                  "js_api": Bridge(self)}
+        # 兼容新旧版 pywebview：icon/gui 等可选参数以运行时的 create_window
+        # 签名为准，支持才传。旧版（如安装版环境的 pywebview）不支持 icon，
+        # 直接传会 TypeError，这里探测后跳过，任务栏图标退回系统默认。
+        try:
+            import inspect as _insp
+            _sig = _insp.signature(webview.create_window)
+            _accepts = set(_sig.parameters)
+        except Exception:
+            _accepts = set()
+        if self.icon and "icon" in _accepts:
+            kwargs["icon"] = self.icon
+        if self._gui and "gui" in _accepts:
+            kwargs["gui"] = self._gui
+        self._window = webview.create_window(**kwargs)
+        start_kwargs = {}
+        if self._gui:
+            start_kwargs["gui"] = self._gui
+
+        # 窗口图标双保险：create_window 支持 icon 时上面已传；
+        # 无论版本，窗口显示后都把标题栏/任务栏图标设为应用图标，
+        # 保证与桌面快捷方式图标一致（旧版 pywebview 也能生效）。
+        if self.icon and os.name == "nt":
+            threading.Thread(
+                target=_apply_window_icon,
+                args=(self.title, self.icon),
+                daemon=True,
+            ).start()
+
+        # 管理员模式 IME 修复：设置用户数据目录和 WebView2 参数
+        # Windows UAC 提升后 WebView2 的 IME 候选窗无法正常显示
+        # 解决方案：设置独立的用户数据目录并启用 IME 支持
+        import ctypes
+        try:
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            is_admin = False
+
+        if is_admin:
+            self._is_admin = True
+            # 设置 WebView2 用户数据目录（避免与非管理员进程冲突）
+            user_data_dir = os.path.join(
+                os.environ.get("LOCALAPPDATA", ""),
+                "AntNest", "WebView2_Data_Admin"
+            )
+            os.makedirs(user_data_dir, exist_ok=True)
+            os.environ["WEBVIEW2_USER_DATA_FOLDER"] = user_data_dir
+            print(f"[PHtmlWin] 管理员模式：WebView2 用户数据目录 -> {user_data_dir}")
+            print(f"[PHtmlWin] 管理员模式：IME 修复已启用")
+
+        # v1.3.0b：不再拦截关闭事件 —— 点窗口 × 即真正退出（进程结束）。
+        # 修复上一版「关闭/退出均失效」：拦截+hide 导致窗口假死、destroy 也被拦。
+        self._minimize_on_close = False
+        self._on_close_callback = None
+
+        try:
+            webview.start(**start_kwargs)
+        except Exception as e:
+            import sys
+            import traceback
+            import os
+            print(f"[PHtmlWin] WebView2 initialization failed: {e}", file=sys.stderr)
+            print("[PHtmlWin] Falling back to browser mode...", file=sys.stderr)
+            try:
+                ant_home = os.environ.get("ANT_HOME") or os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), ".antnest")
+                os.makedirs(ant_home, exist_ok=True)
+                log_path = os.path.join(ant_home, "startup_error.log")
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(f"[PHtmlWin] WebView2 initialization failed\n")
+                    f.write(f"Error: {e}\n")
+                    f.write(f"Falling back to browser mode\n\n")
+                    f.write(traceback.format_exc())
+            except Exception:
+                pass
+            self._backend = "browser"
+            self._start_browser()
+
+    def _start_browser(self) -> None:
+        app_self = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                p = urlparse(self.path)
+                if p.path in ("/", ""):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(app_self.render().encode("utf-8"))
+                elif p.path == "/api/events":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
+                    self.end_headers()
+                    try:
+                        while True:
+                            if app_self._updates:
+                                u = app_self._updates.pop(0)
+                                self.wfile.write(f"data: {json.dumps(u)}\n\n".encode())
+                                self.wfile.flush()
+                            else:
+                                self.wfile.write(b": ping\n\n")
+                                self.wfile.flush()
+                            time.sleep(0.2)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass  # 客户端断开，安静退出该 SSE 线程
+                else:
+                    self.send_error(404)
+
+            def do_POST(self):
+                p = urlparse(self.path)
+                if p.path == "/api/route":
+                    n = int(self.headers.get("Content-Length", 0) or 0)
+                    raw = self.rfile.read(n) if n else b"{}"
+                    payload = json.loads(raw) if raw else {}
+                    name = payload.get("route")
+                    data = payload.get("data", {})
+                    # 浏览器模式鉴权：非公开路由需通过 _auth_check
+                    cookies = _parse_cookies(self.headers.get("Cookie", ""))
+                    if (app_self._auth_check is not None
+                            and name not in app_self._public_routes
+                            and not app_self._auth_check(name, cookies)):
+                        self.send_response(401)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(json.dumps(
+                            {"updates": [], "error": "unauthorized"}).encode())
+                        return
+                    fn = app_self._routes.get(name)
+                    if fn:
+                        fn(data)
+                    ups = list(app_self._updates)
+                    app_self._updates.clear()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    if app_self._cookie_out:
+                        self.send_header(
+                            "Set-Cookie",
+                            f"an_token={app_self._cookie_out}; Path=/; HttpOnly; "
+                            f"Max-Age=86400; SameSite=Lax")
+                        app_self._cookie_out = None
+                    if app_self._cookie_clear:
+                        self.send_header(
+                            "Set-Cookie",
+                            "an_token=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax")
+                        app_self._cookie_clear = False
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"updates": ups}).encode())
+                else:
+                    self.send_error(404)
+
+        srv = ThreadingHTTPServer((app_self._host, app_self._port), Handler)
+        host = app_self._host
+        port = srv.server_address[1]
+        app_self._port = port
+        bind_host = "127.0.0.1" if host in ("0.0.0.0", "127.0.0.1") else host
+        print(f"PHtmlWin → http://{bind_host}:{port}/  (浏览器模式)")
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        # 仅在本地回环时自动开浏览器；绑 0.0.0.0（供跨机/VM 访问）时不自动开，
+        # 因为服务器所在机器（如 Alpine VM）通常无图形浏览器。
+        if host in ("127.0.0.1", "localhost", "::1"):
+            try:
+                webbrowser.open(f"http://127.0.0.1:{port}/")
+            except Exception:
+                pass
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            srv.shutdown()
+
+
+if __name__ == "__main__":
+    # 最小自测：不依赖显示，验证 DSL + 渲染 + bridge 生成
+    a = Win("self-test")
+    a.css("body{color:red}")
+    a.body(ui.div(cls="card", id="x")[ui.h1("Hi"), ui.button("Go", onclick="start")])
+    out = a.render()
+    assert 'data-phw-bind="click:start"' in out
+    assert "<h1>Hi</h1>" in out
+    assert 'id="x"' in out
+    print("PHtmlWin self-test OK, html length =", len(out))

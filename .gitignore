@@ -1,0 +1,26 @@
+# ===== 密钥 / 运行时状态（切勿提交！）=====
+state/
+config.json
+config.json.key
+*.key
+
+# ===== Python =====
+__pycache__/
+*.pyc
+
+# ===== 预览快照（非应用，本地生成）=====
+panel_preview*.html
+
+# ===== 遗留前端（已弃用）=====
+frontend/
+
+# ===== 构建产物 / 虚拟机磁盘（二进制，太大不入库）=====
+*.vmdk
+*.nvram
+nvram
+*.vmem
+*.vmsd
+*.vmxf
+*.vmx
+*.iso
+vmware*.log

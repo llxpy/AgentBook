@@ -1,0 +1,21 @@
+# antnest-web · setup-alpine 应答文件（手动兜底用）
+# 若不想用 FIRSTBOO.SH 一键装机，可在 live 环境里：
+#   setup-alpine -c /media/cdrom1/ANSWER.TXT
+# 装完基础系统后再手动： tar xzf /media/cdrom1/ANTNEST.TGZ -C /opt/antnest-web && sh /opt/antnest-web/service/install.sh
+KEYMAPOPTS="us us"
+HOSTNAMEOPTS="antnest-web"
+INTERFACESOPTS="auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+"
+DNSOPTS=""
+TIMEZONEOPTS="UTC"
+PROXYOPTS="none"
+APKREPOSITORYOPTS="http://dl-cdn.alpinelinux.org/alpine/v3.24/main http://dl-cdn.alpinelinux.org/alpine/v3.24/community"
+SSHDOPTS="none"
+NTPOPTS="none"
+DISKOPTS="sda none"
+USEROPTS="--disabled"
+GUIOPTS="none"

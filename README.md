@@ -1,0 +1,182 @@
+# antnest-web · Linux 运维 Agent 控制服务
+
+一台**独立 Linux VM**，开机自启一个服务；Win 浏览器用 `IP:端口` 登录后，看到
+**对话页 + 状态页**，配好 API 后用自然语言直接控制这台 Linux。与本地 AntNest 无关，
+完全独立。
+
+> 来源：把《deb_rpm 安装包修改工具横评与预置配置免交互部署方案》里的 9 类白名单动作
+> 变成了这个 Agent 的「工具集」——你说"把 foo.deb 预置配置后重打包"，它就调 `pkg.repack_deb`。
+
+## 能力
+
+- **对话页**：自然语言 → Agent → 工具调用 → 结果。支持 OpenAI 兼容端点（DeepSeek / 本地 vLLM / Ollama）。
+- **状态页**：实时显示内核 / uptime / 负载 / 内存 / 磁盘 / 监听端口 / 运行服务 / 工具链可用性。
+- **工具集**（受护栏）：
+  - `system.run_cmd` — 执行命令（灾难性命令拒绝；sudo/rm -rf/格式化/改系统服务需界面确认）
+  - `system.status` — 只读状态
+  - `files.read` / `files.write` — 文件读写（系统关键路径需确认）
+  - `pkg.inspect` — 查看 .deb/.rpm 控件/文件/脚本
+  - `pkg.install_test` — disposable 预检（不真装）
+  - `pkg.repack_deb` / `pkg.repack_rpm` — 基于现有包重打包（**原签名失效，需重签**）
+  - `pkg.rollback` — 回滚/重装（L3，需确认）
+- **登录**：首次启动随机生成密码，打印到服务日志；支持 token 会话。
+
+## 通用 Linux 安装（推荐：云服务器 / 裸机）
+
+别人（或你自己）**下载 GitHub 仓库后一条命令就能装好并起服务**：
+纯标准库运行、零 pip 依赖，安装器自动识别包管理器（apt/dnf/yum/apk/pacman）
+和 init 系统（systemd / OpenRC），注册开机自启服务、崩溃自动拉起，绑
+`0.0.0.0:8080`，浏览器用 `IP:端口` 直接进。
+
+```bash
+git clone <你的仓库地址> antnest-web
+cd antnest-web
+sudo ./install.sh                          # 装 python3 + 注册开机自启 + 启动
+# 想非交互指定首次登录密码：
+sudo ./install.sh --password 你的密码
+# 或用环境变量（CI / 脚本部署）：
+AN_AGENT_PASSWORD=你的密码 sudo -E ./install.sh
+```
+
+装完会打印本机 IP 和访问地址。云服务器记得在**安全组/防火墙放行 8080 入站**；
+公网暴露建议前置反向代理 + TLS（见文末安全边界）。
+
+> 安装器 `service/install.sh` 是发行版无关的——在 Debian/Ubuntu/RHEL 系（systemd）、
+> Alpine（OpenRC）、以及 Arch（pacman）上都能跑；识别不到 init 时会自动回退为
+> `nohup` 后台进程（不注册开机自启）。
+
+## 本地开发运行（任意有 Python3 的机器）
+
+```bash
+cd antnest-web
+python3 server.py
+# 打开 http://127.0.0.1:8080/ ；未配 API Key 时自动进入演示模式
+```
+
+配置 LLM：登录后点「API 配置」填 Base URL / 模型 / Key，或在环境变量里给：
+`AN_AGENT_PASSWORD`（登录密码）、`AN_WEB_HOST`、`AN_WEB_PORT`（默认 0.0.0.0:8080）。
+
+## 嵌入 Alpine VM（目标：alpine-virt ISO）
+
+### 方式 A：手动（最可靠）
+
+1. 用 `alpine-virt` ISO 起 VM，`setup-alpine` 选 `sys` 安装到磁盘。
+2. 把本项目拷进 VM（U 盘 / scp / HTTP）。
+3. 在 VM 内运行：`sh service/install.sh`
+4. 浏览器开 `http://<VM的IP>:8080/`，密码见 `tail -n 20 /var/log/antnest-web.log`。
+
+`install.sh` 是通用安装器（见上方「通用 Linux 安装」），在 Alpine 上自动识别
+`apk` + OpenRC：装 python3、把应用放到 `/opt/antnest-web`、注册 OpenRC 服务
+`antnest-web`（开机自启）、立即启动。
+
+### 方式 B：一键烧录（需本机有虚拟化）
+
+```bash
+bash build/build_alpine_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso antnest-web-vm
+# 产出 antnest-web-vm.qcow2，启动：
+qemu-system-x86_64 -m 1024 -nographic -hda antnest-web-vm.qcow2 \
+  -netdev user,id=n0 -device virtio-net-pci,netdev=n0
+```
+> 烧录脚本用 serial 喂安装命令（best-effort）。若 live 镜像不自动 root 登录，按提示手动补命令即可。
+
+### 方式 C：VMware（无需 QEMU，推荐 VMware 用户）
+
+```bash
+bash build/vmware/build_vmware_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso antnest-web-vm
+# 产出 build/vmware/antnest-web-vm/ ：
+#   antnest-web-vm.vmx        VMware 打开这个
+#   antnest-web-vm.vmdk       虚拟磁盘（本机有 qemu-img/vmware-vdiskmanager 则自动建；否则 VMware 里点一下「添加硬盘」）
+#   antnest-web-config.iso    配置光盘（answerfile + firstboot + 应用包），已挂在 ide1:1
+```
+
+**使用步骤**：
+1. VMware 打开 `antnest-web-vm.vmx`（提示升级/转换按默认）。
+2. 首次开机：空磁盘回落到 CD-ROM 启动 Alpine live；没自动进就在开机瞬间按 ESC 选 CD-ROM。
+   live 环境 `login:` 直接回车进 root。
+3. 控制台执行一次（自动装系统 + 拷应用 + 注册开机自启服务，然后关机）：
+   ```sh
+   sh /media/cdrom1/FIRSTBOO.SH     # 路径不对就试 /dev/sr1、/dev/cdrom1、/media/cdrom
+   ```
+4. 关机后，VMware「虚拟机设置」里移除两张 ISO（或断开连接）。
+5. 重新开机 → 从磁盘启动，浏览器开 `http://<VM的IP>:8080/`，首次密码见 VM 内 `/var/log/antnest-web.log`。
+
+> 配置光盘是**纯 Python 生成的 ISO9660**（`build/vmware/mkiso.py`，零三方依赖），
+> 内装 `FIRSTBOO.SH`（一键装机脚本）、`ANSWER.TXT`（手动 `setup-alpine` 应答文件）、`ANTNEST.TGZ`（应用包）。
+
+**配置盘挂不上时的可靠兜底（HTTP）**：VMware 对第二张 IDE 光驱识别有时不稳定，
+可改用宿主 HTTP 把文件喂进 VM（`FIRSTBOO.SH` / `ANTNEST.TGZ` 已落盘到 VM 目录）：
+1. 宿主（Win）起服务：
+   ```bat
+   cd E:\Linux_Agent\antnest-web\build\vmware\antnest-web-vm
+   python3 -m http.server 8000
+   ```
+2. VM 里先确认有网（VMware NAT 下自动拿 DHCP）；没有就 `udhcpc -i eth0`，再 `ip route` 看网关即宿主 IP。
+3. VM 控制台：
+   ```sh
+   wget http://<宿主IP>:8000/FIRSTBOO.SH -O /tmp/fb.sh
+   sh /tmp/fb.sh http://<宿主IP>:8000      # 脚本会从此地址拉 ANTNEST.TGZ
+   ```
+   后续同方式 C 步骤 4–5（移除 ISO、重启、浏览器访问）。
+
+## 关于"改包工具链"的重要说明
+
+Alpine **仓库没有** `dpkg-dev` / `rpmrebuild`。Agent 仍能在 Alpine 上跑命令、看状态、
+读文件；但真正的 `.deb` / `.rpm` 重打包需要 Debian / RHEL 系工具链。
+
+`pkg.repack_deb` / `pkg.repack_rpm` 是**容器感知**的，按以下顺序自动决策：
+
+1. **宿主机有工具链**（`dpkg-deb` / `rpmrebuild`）→ 直接在本机改包（最快、最干净）。
+2. **宿主机没有，但装了 `podman` / `docker`** → 自动在 disposable 的
+   `debian:bookworm` / `rockylinux:9` 容器内改包（对应研究里的"同版本 disposable 环境"）：
+   容器里 `apt-get install dpkg-dev` / `dnf install rpmrebuild`，改完把产物拷回宿主机，
+   容器 `--rm` 即焚。原签名在两种路径下都会失效，需重签才视为可信包。
+3. **两者都无** → 返回明确中文指引（"请 `apk add podman` 或把服务装到 Debian 系 VM"），
+   **绝不静默失败**。
+
+容器镜像可用环境变量覆盖：`AN_IMG_DEB`（默认 `debian:bookworm`）、
+`AN_IMG_RPM`（默认 `rockylinux:9`）。
+
+> 推荐落地：Alpine VM 里 `apk add podman` 一次，后续所有改包都走路径 2，无需换发行版。
+> 若图省事，直接把 antnest-web 装进 Debian / RHEL 系 VM，走路径 1。
+
+## 安全边界（对齐研究第 9 章）
+
+- 不拼自由 Shell：命令由 Agent 显式构造，护栏先分类（deny / privileged / ok）。
+- 灾难性命令（删根、格式化、写设备、关机）直接拒绝。
+- 高危命令需用户在前端点「确认」才执行（`needs_confirm`）。
+- 所有动作写审计日志 `state/audit.log`。
+- 登录密码随机生成、独立存储；生产环境建议前置反向代理 + TLS。
+
+## 文件结构
+
+```
+antnest-web/
+  server.py        HTTP 服务启动器（PHtmlWin 通用面板，绑 0.0.0.0:8080）
+  agent.py         Agent 循环 + OpenAI 兼容 LLM 客户端（含 mock 模式）
+  tools.py         工具集 + 护栏注册表 + OpenAI function schema
+  guard.py         命令护栏（禁用/需授权模式）
+  config.py        LLM 配置 + Key / 密码分离存储
+  panel.py         AgentPanel（ui.* DSL 描述界面 + @route 绑定事件，暗面构建主题）
+  phtmlwin.py      PHtmlWin（vendored：浏览器回退模式，零三方依赖）
+  service/install.sh        通用安装器（apt/dnf/yum/apk/pacman + systemd/OpenRC）
+  service/antnest-web       OpenRC 服务单元（Alpine 用）
+  build/build_alpine_vm.sh  烧录脚本（QEMU，ISO → qcow2）
+  build/vmware/         VMware 构建套件（无需 QEMU）：
+    build_vmware_vm.sh  生成 .vmx + 配置 ISO（+ 自动建 vmdk）
+    mkiso.py            纯 Python ISO9660 生成器（零依赖）
+    firstboot.sh        VM 内一键装机脚本（挂在配置光盘里）
+    answerfile          setup-alpine 手动应答文件
+  smoke_test.py         端到端冒烟测试（HTTP 层 + 工具层，mock 模式免 Key）
+```
+> systemd 单元 `/etc/systemd/system/antnest-web.service` 由 `install.sh` 运行时生成
+> （写入解析后的 python3 绝对路径），不进仓库，避免路径漂移。
+
+## 自测
+
+```bash
+export PY=python3
+$PY smoke_test.py          # 启动服务→登录/SSE→工具层（护栏/repack/dispatch）共 18 项
+```
+
+无需外部 LLM Key：对话走 mock 模式（`system.status` / `system.run_cmd` 演示闭环），
+但登录鉴权、SSE 流式、护栏 deny/needs_confirm、repack 容器感知指引、dispatch 路由都是真路径。
