@@ -181,6 +181,28 @@ sudo nginx -t && sudo systemctl reload nginx
 > 前置 nginx 后，云服务器安全组只需放行 **80/443**，原 8080 可只留本机
 > （AgentBook 仍绑 `0.0.0.0:8080`，若要只听本机可设 `AN_WEB_HOST=127.0.0.1`）。
 
+## Docker 一键分发
+
+不想碰系统安装器、只想一条命令起服务的场景（NAS / 云主机 / 本地 Docker）：
+
+```bash
+# （可选）先设首次登录密码，避免随机密码
+echo "AN_AGENT_PASSWORD=你的密码" > .env
+docker compose up -d --build
+# 浏览器开 http://<本机IP>:8080/
+```
+
+- 镜像基于 `python:3-slim`，**零 pip 依赖**，构建快、体积小。
+- 密码 / API Key / 配置全部落在命名卷 `agentbook-data`（容器内 `/data`），
+  重建容器不丢；**镜像本身不含任何密钥**。
+- `restart: always`：崩溃 / 宿主机重启自动拉起。
+- 没设 `AN_AGENT_PASSWORD` 时，首次启动随机生成密码并写入卷，
+  用 `docker logs agentbook` 看一眼即可（之后稳定不变）。
+- 公网暴露同样建议前置 nginx + TLS（见上节），安全组只放行 80/443。
+
+> 涉及 `.deb/.rpm` 重打包时，容器内可 `apk add podman` 或用宿主机 docker
+> （`AN_IMG_DEB` / `AN_IMG_RPM` 覆盖镜像），走研究里的「disposable 容器改包」路径。
+
 ## 文件结构
 
 ```
@@ -203,6 +225,9 @@ AgentBook/
   deploy/nginx/         nginx 反向代理配置（标准 include / symlink 即用）：
     agentbook.conf      80→HTTPS 跳转 + 443 TLS 反代（SSE 已关缓冲）
     agentbook-http.conf 纯 HTTP 版（内网 / 已有 TLS 终止时用）
+  deploy/docker/Dockerfile   Docker 镜像定义（python:3-slim，零三方依赖）
+  docker-compose.yml         Docker 一键起服务（命名卷持久化 / restart:always）
+  .dockerignore              构建时排除密钥与构建产物
   smoke_test.py         端到端冒烟测试（HTTP 层 + 工具层，mock 模式免 Key）
 ```
 > systemd 单元 `/etc/systemd/system/agentbook.service` 由 `install.sh` 运行时生成

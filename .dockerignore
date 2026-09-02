@@ -1,0 +1,30 @@
+# 版本控制 / 缓存
+.git
+.gitignore
+__pycache__/
+*.pyc
+
+# 敏感 & 运行时状态（绝不能进镜像）
+state/
+config.json
+config.json.key
+*.key
+
+# 本地预览 / 遗留前端
+panel_preview*.html
+frontend/
+
+# 虚拟机构建产物（二进制太大，不入库也不进镜像）
+build/
+*.vmdk
+*.vmx
+*.nvram
+*.vmem
+*.vmsd
+*.vmxf
+*.iso
+*.qcow2
+vmware*.log
+
+# 自身
+.dockerignore

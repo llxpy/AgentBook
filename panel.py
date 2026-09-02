@@ -3,6 +3,7 @@
 
 和 AntNest 的面板同款写法：ui.* DSL 描述界面 + @app.route 绑定事件 +
 app.update(selector, html) 实时刷新。暗面构建设计 token 内联，VM 自包含、零三方依赖。
+所有 UI 文案走 i18n（i18n.t），支持中/英切换；含新手引导、服务商预设、示例指令。
 
 可独立运行（server.py 起 0.0.0.0:8080 浏览器模式），也可 mount 进任意 Win：
     panel = AgentPanel()
@@ -21,6 +22,15 @@ from phtmlwin import ui, Win
 import config as config_mod
 import agent as agent_mod
 import tools as tools_mod
+import i18n as i18n_mod
+
+# 当前语言（进程内全局；单用户面板足够，切换后经 location.reload() 生效）
+LANG = "zh"
+
+
+def T(key: str) -> str:
+    """按当前 LANG 取文案。"""
+    return i18n_mod.t(key, LANG)
 
 
 # 浏览器模式登录会话：token -> {"created": ts}
@@ -48,6 +58,30 @@ def _fmt_uptime(sec) -> str:
 
 def _bar_color(p: int) -> str:
     return "err" if p >= 85 else ("warn" if p >= 70 else "")
+
+
+def _lang_select():
+    sel = (
+        '<select id="lang-sel" class="lang-sel" '
+        f'onchange="PHW.route(\'set_lang\',{{value:this.value}})">'
+        f'<option value="zh"{" selected" if LANG == "zh" else ""}>中文</option>'
+        f'<option value="en"{" selected" if LANG == "en" else ""}>English</option>'
+        '</select>'
+    )
+    return ui.raw(sel)
+
+
+def _preset_select():
+    sel = (
+        '<select id="cfg-preset" class="preset-sel" '
+        f'onchange="PHW.route(\'preset_apply\',{{value:this.value}})">'
+        f'<option value="custom">{_esc(T("preset_custom"))}</option>'
+        f'<option value="openai">{_esc(T("preset_openai"))}</option>'
+        f'<option value="deepseek">{_esc(T("preset_deepseek"))}</option>'
+        f'<option value="ollama">{_esc(T("preset_ollama"))}</option>'
+        '</select>'
+    )
+    return ui.raw(sel)
 
 
 # --------------------------------------------------------------------------
@@ -103,6 +137,7 @@ body::before{
 .brand h1{font-size:16px;margin:0;letter-spacing:.4px;font-weight:650}
 .brand small{display:block;color:var(--sub);font-size:11.5px;margin-top:1px;letter-spacing:.3px}
 .top-actions{display:flex;align-items:center;gap:10px}
+.lang-sel{width:auto;padding:5px 8px;font-size:12px}
 .status-pill{
   display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--sub);
   padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:rgba(255,255,255,0.03);
@@ -228,8 +263,12 @@ label.chk input{width:auto}
 .cfg-msg .ok{color:var(--ok)} .cfg-msg .err{color:var(--err)}
 .hint{margin-top:16px;padding:11px 13px;font-size:12px;color:var(--sub);
   background:var(--accent-12);border:1px solid var(--accent-30);border-radius:10px;line-height:1.65;font-family:var(--mono)}
+.preset-sel{margin-top:6px}
+.example-chip{font-size:12px;padding:5px 10px;border-radius:20px;background:var(--accent-12);
+  border:1px solid var(--accent-30);color:#bfe9f7;cursor:pointer;font-family:var(--mono)}
+.example-chip:hover{border-color:var(--accent);color:#fff}
 
-/* login */
+/* login / wizard */
 .overlay{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
   background:rgba(5,8,15,0.85);backdrop-filter:blur(6px)}
 .overlay.hidden{display:none}
@@ -240,6 +279,9 @@ label.chk input{width:auto}
 .login-card h2{margin:0 0 6px;font-size:19px;font-weight:650}
 .login-card p{color:var(--sub);font-size:13px;margin:0 0 18px}
 .login-card input{margin-bottom:14px;text-align:center;letter-spacing:1px}
+.wiz-step{margin:12px 0;font-size:13px;line-height:1.6}
+.wiz-step .muted{margin-top:3px}
+.wiz-step b{color:var(--accent)}
 
 /* scrollbars */
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -253,6 +295,15 @@ label.chk input{width:auto}
   .console{border-right:none}
 }
 """
+
+
+class AgentPanelApp(Win):
+    """Win 子类：每次 render 用当前语言重建 body，使语言切换（reload 后）真生效。"""
+
+    def render(self):
+        self._body_children = []
+        self.body(self._panel._layout())
+        return super().render()
 
 
 class AgentPanel:
@@ -274,7 +325,7 @@ class AgentPanel:
         self.API_HISTORY.append({"role": "user", "content": text})
         self.APP.run_js("var i=document.querySelector('#chat-input'); if(i) i.value='';")
         self._render_chat()
-        self.APP.update("#agent-status", '<span class="dot"></span>Agent 思考中…')
+        self.APP.update("#agent-status", '<span class="dot"></span>' + T("thinking"))
         self.busy = True
         try:
             cfg = config_mod.load_config()
@@ -283,7 +334,7 @@ class AgentPanel:
             self._on_event("error", {"message": str(e)})
         finally:
             self.busy = False
-            self.APP.update("#agent-status", '<span class="dot"></span>待命')
+            self.APP.update("#agent-status", '<span class="dot"></span>' + T("standby"))
 
     def _on_event(self, event: str, payload: dict):
         if event == "error":
@@ -296,20 +347,19 @@ class AgentPanel:
         if not items:
             self.APP.update(
                 "#chat-msgs",
-                '<div class="muted center">用自然语言下达指令，例如：'
-                '「查看系统状态」「把 foo.deb 预置配置后重打包」</div>')
+                '<div class="muted center">' + _esc(T("empty_hint")) + '</div>')
             return
         parts = []
         for m in items:
             role = m.get("role")
             if role == "user":
-                parts.append('<div class="bubble user"><div class="who">指令</div><div class="txt">'
-                             + _esc(m.get("content", "")) + '</div></div>')
+                parts.append('<div class="bubble user"><div class="who">' + _esc(T("role_user"))
+                             + '</div><div class="txt">' + _esc(m.get("content", "")) + '</div></div>')
             elif role == "assistant":
                 c = m.get("content") or ""
                 if c.strip():
-                    parts.append('<div class="bubble ai"><div class="who">Agent</div><div class="txt">'
-                                 + _esc(c) + '</div></div>')
+                    parts.append('<div class="bubble ai"><div class="who">' + _esc(T("role_agent"))
+                                 + '</div><div class="txt">' + _esc(c) + '</div></div>')
             elif role == "tool":
                 name = _esc(m.get("name", ""))
                 status = m.get("status", "ok")
@@ -328,8 +378,8 @@ class AgentPanel:
                     + (f'<pre class="res">{res_s}</pre>' if res_s else '')
                     + '</div></div>')
             elif role == "error":
-                parts.append('<div class="bubble err"><div class="who">错误</div><div class="txt">'
-                             + _esc(m.get("content", "")) + '</div></div>')
+                parts.append('<div class="bubble err"><div class="who">' + _esc(T("role_error"))
+                             + '</div><div class="txt">' + _esc(m.get("content", "")) + '</div></div>')
         self.APP.update("#chat-msgs", "\n".join(parts))
         self.APP.run_js(
             "var e=document.querySelector('#chat-msgs'); if(e) e.scrollTop=e.scrollHeight;")
@@ -342,7 +392,7 @@ class AgentPanel:
         except Exception as e:  # noqa
             self.APP.update(
                 "#dashboard-body",
-                f'<div class="muted center">状态获取失败：{_esc(e)}</div>')
+                f'<div class="muted center">' + _esc(T("status_fail").format(_esc(e))) + '</div>')
 
     def _dashboard_html(self, res: dict) -> str:
         # 内存
@@ -366,42 +416,42 @@ class AgentPanel:
         # 指标卡
         parts.append(f"""
         <div class="stat-grid">
-          <div class="stat"><div class="label">负载</div><div class="value">{_esc(load)}</div></div>
-          <div class="stat"><div class="label">运行时长</div><div class="value">{_esc(up_s)}</div></div>
-          <div class="stat"><div class="label">内存</div><div class="value">{mem_av}<small>/{mem_tot} GB</small></div>
+          <div class="stat"><div class="label">{_esc(T("stat_load"))}</div><div class="value">{_esc(load)}</div></div>
+          <div class="stat"><div class="label">{_esc(T("stat_uptime"))}</div><div class="value">{_esc(up_s)}</div></div>
+          <div class="stat"><div class="label">{_esc(T("stat_mem"))}</div><div class="value">{mem_av}<small>/{mem_tot} GB</small></div>
             <div class="bar {_bar_color(mem_pct)}"><i style="width:{mem_pct}%"></i></div></div>
-          <div class="stat"><div class="label">磁盘</div><div class="value">{disk_free}<small>/{disk_tot} GB</small></div>
+          <div class="stat"><div class="label">{_esc(T("stat_disk"))}</div><div class="value">{disk_free}<small>/{disk_tot} GB</small></div>
             <div class="bar {_bar_color(disk_pct)}"><i style="width:{disk_pct}%"></i></div></div>
         </div>""")
         # 系统信息
         parts.append(f"""
-        <div class="card"><h3>系统信息</h3>
+        <div class="card"><h3>{_esc(T("sysinfo"))}</h3>
           <div class="info-grid">
-            <span class="k">内核</span><span class="v">{_esc(res.get('kernel', '—'))}</span>
-            <span class="k">主机名</span><span class="v">{_esc(res.get('nodename', '—'))}</span>
-            <span class="k">已运行</span><span class="v">{_esc(up_s)}</span>
+            <span class="k">{_esc(T("kernel"))}</span><span class="v">{_esc(res.get('kernel', '—'))}</span>
+            <span class="k">{_esc(T("hostname"))}</span><span class="v">{_esc(res.get('nodename', '—'))}</span>
+            <span class="k">{_esc(T("uptime"))}</span><span class="v">{_esc(up_s)}</span>
           </div></div>""")
         # 监听端口
         port_chips = "".join(f'<span class="chip">{_esc(p)}</span>' for p in ports) or \
-            '<span class="chip dim">无</span>'
+            '<span class="chip dim">—</span>'
         parts.append(
-            f'<div class="card"><h3>监听端口 <span class="mini muted">{len(ports)}</span></h3>'
+            f'<div class="card"><h3>{_esc(T("ports"))} <span class="mini muted">{len(ports)}</span></h3>'
             f'<div class="chips">{port_chips}</div></div>')
         # 运行服务
         svc_chips = "".join(f'<span class="chip">{_esc(s)}</span>' for s in svcs) or \
-            '<span class="chip dim">无</span>'
+            '<span class="chip dim">—</span>'
         parts.append(
-            f'<div class="card"><h3>运行服务 <span class="mini muted">{len(svcs)}</span></h3>'
+            f'<div class="card"><h3>{_esc(T("services"))} <span class="mini muted">{len(svcs)}</span></h3>'
             f'<div class="chips">{svc_chips}</div></div>')
         # 工具链可用性
         if tools_d:
             pills = []
             for k, v in tools_d.items():
                 cls = "ok" if v else "off"
-                label = "可用" if v else "缺失"
+                label = _esc(T("available")) if v else _esc(T("missing"))
                 pills.append(f'<span class="pill {cls}"><span class="dot"></span>{_esc(k)} · {label}</span>')
             parts.append(
-                f'<div class="card"><h3>工具链</h3><div class="pills">{"".join(pills)}</div></div>')
+                f'<div class="card"><h3>{_esc(T("toolchain"))}</h3><div class="pills">{"".join(pills)}</div></div>')
         return "\n".join(parts)
 
     # ============================================================ 配置
@@ -432,6 +482,18 @@ class AgentPanel:
     def cfg_mock(self, d):
         self.CFG_DRAFT["mock_mode"] = bool(d.get("value"))
 
+    def preset_apply(self, d):
+        name = (d.get("value") or "custom")
+        p = i18n_mod.PROVIDER_PRESETS.get(name)
+        if not p:
+            return
+        self.CFG_DRAFT["llm_base_url"] = p["base"]
+        self.CFG_DRAFT["llm_model"] = p["model"]
+        self.APP.run_js("var e=document.querySelector('#cfg-base'); if(e) e.value="
+                        + json.dumps(p["base"]) + ";")
+        self.APP.run_js("var e=document.querySelector('#cfg-model'); if(e) e.value="
+                        + json.dumps(p["model"]) + ";")
+
     def cfg_test(self, d):
         cfg = dict(self.CFG_DRAFT)
         try:
@@ -441,10 +503,10 @@ class AgentPanel:
             return
         if r.get("ok"):
             self._fill_models(cfg)
-            self.APP.update("#cfg-msg", '<div class="ok">✅ 连接成功'
-                            + (f'（{len(r.get("models", []))} 个模型）' if r.get("models") else '') + '</div>')
+            extra = T("cfg_models").format(len(r.get("models", []))) if r.get("models") else ""
+            self.APP.update("#cfg-msg", '<div class="ok">' + _esc(T("cfg_ok")) + _esc(extra) + '</div>')
         else:
-            self.APP.update("#cfg-msg", f'<div class="err">❌ {_esc(r.get("error", "未知错误"))}</div>')
+            self.APP.update("#cfg-msg", '<div class="err">' + _esc(T("cfg_err").format(_esc(r.get("error", "")))) + '</div>')
 
     def _fill_models(self, cfg: dict):
         try:
@@ -464,12 +526,33 @@ class AgentPanel:
             cfg["llm_api_key"] = self.CFG_DRAFT["llm_api_key"]
         try:
             config_mod.save_config(cfg)
-            self.APP.update("#cfg-msg", '<div class="ok">✅ 已保存，重启服务后全量生效</div>')
+            self.APP.update("#cfg-msg", '<div class="ok">' + _esc(T("cfg_saved")) + '</div>')
         except Exception as e:  # noqa
-            self.APP.update("#cfg-msg", f'<div class="err">❌ 保存失败：{_esc(e)}</div>')
+            self.APP.update("#cfg-msg", '<div class="err">' + _esc(T("cfg_save_err").format(_esc(e))) + '</div>')
 
     def cfg_close(self, d):
         self.APP.run_js("document.querySelector('#cfg-drawer').classList.add('hidden');")
+
+    # ============================================================ 语言 / 新手引导
+    def set_lang(self, d):
+        global LANG
+        lang = (d.get("value") or "zh")
+        if lang not in i18n_mod.I18N:
+            lang = "zh"
+        LANG = lang
+        try:
+            cfg = config_mod.load_config()
+            cfg["ui_lang"] = lang
+            config_mod.save_config(cfg)
+        except Exception:
+            pass
+        # 前端随后 location.reload()
+
+    def wizard_open(self, d):
+        self.APP.run_js("document.querySelector('#wizard-overlay').classList.remove('hidden');")
+
+    def wizard_close(self, d):
+        self.APP.run_js("document.querySelector('#wizard-overlay').classList.add('hidden');")
 
     # ============================================================ 登录
     def login(self, d):
@@ -482,15 +565,17 @@ class AgentPanel:
             self.APP.run_js(
                 "var p=document.querySelector('#conn-pill');"
                 "if(p){p.classList.remove('off');"
-                "p.innerHTML='<span class=\"dot\"></span> 在线';}")
+                "p.innerHTML='<span class=\"dot\"></span> " + _esc(T("online")) + "';}")
             # 登录后启动仪表盘自动刷新（5s）
             self.APP.run_js(
                 "if(window.__dash)clearInterval(window.__dash);"
                 "window.__dash=setInterval(function(){PHW.route('status_refresh',{});},5000);")
             self.status_refresh({})
             self.cfg_open({})
+            # 首次进入弹出新手引导
+            self.APP.run_js("document.querySelector('#wizard-overlay').classList.remove('hidden');")
         else:
-            self.APP.update("#login-msg", '<div class="err">❌ 密码错误</div>')
+            self.APP.update("#login-msg", '<div class="err">' + _esc(T("login_err")) + '</div>')
 
     def logout(self, d):
         cookie = d.get("value") or ""
@@ -502,25 +587,30 @@ class AgentPanel:
         self.APP.run_js(
             "if(window.__dash)clearInterval(window.__dash);"
             "var p=document.querySelector('#conn-pill');"
-            "if(p){p.classList.add('off');p.innerHTML='<span class=\"dot\"></span> 待命';}"
+            "if(p){p.classList.add('off');p.innerHTML='<span class=\"dot\"></span> " + _esc(T("standby")) + "';}"
             "document.querySelector('#login-overlay').classList.remove('hidden');")
 
     # ============================================================ 构建
     def build_app(self) -> Win:
-        app = Win(title="AgentBook 面板 · 在暗面构建", width=1180, height=780,
-                  backend="browser", host="0.0.0.0", port=8080)
+        global LANG
+        LANG = (config_mod.load_config().get("ui_lang") or "zh")
+        if LANG not in i18n_mod.I18N:
+            LANG = "zh"
+        app = AgentPanelApp(title=T("login_title") + " · 在暗面构建", width=1180, height=780,
+                            backend="browser", host="0.0.0.0", port=8080)
         self.APP = app
+        app._panel = self
         app.css(CSS)
-        app.body(self._layout())
         self._register_routes(app)
-        # 浏览器模式鉴权：仅 login/logout 公开
-        app._public_routes = {"login", "logout"}
+        # 浏览器模式鉴权：仅 login/logout/set_lang 公开
+        app._public_routes = {"login", "logout", "set_lang"}
         app._auth_check = lambda name, cookies: cookies.get("an_token", "") in SESSIONS
         return app
 
     def _register_routes(self, app: Win):
         for name in ("chat_send", "status_refresh", "cfg_open", "cfg_base", "cfg_key",
                      "cfg_model", "cfg_mock", "cfg_test", "cfg_save", "cfg_close",
+                     "preset_apply", "set_lang", "wizard_open", "wizard_close",
                      "login", "logout"):
             app.route(name)(getattr(self, name))
 
@@ -530,53 +620,56 @@ class AgentPanel:
                 ui.div(cls="brand")[
                     ui.span("🐜", cls="logo"),
                     ui.div()[
-                        ui.h1("AgentBook 面板"),
-                        ui.small("在暗面构建 · 自然语言控制这台 Linux"),
+                        ui.h1(T("login_title")),
+                        ui.small(T("brand_sub")),
                     ],
                 ],
                 ui.div(cls="top-actions")[
+                    _lang_select(),
+                    ui.button("📖", cls="ghost", onclick="wizard_open",
+                              title=_esc(T("wizard_title"))),
                     ui.span(id="conn-pill", cls="status-pill off")[
-                        ui.span(cls="dot"), "待命"],
-                    ui.button("⚙ 配置", cls="ghost", onclick="cfg_open"),
-                    ui.button("登出", cls="ghost",
+                        ui.span(cls="dot"), T("standby")],
+                    ui.button(T("btn_config"), cls="ghost", onclick="cfg_open"),
+                    ui.button(T("btn_logout"), cls="ghost",
                               onclick="PHW.route('logout',{value:document.cookie})"),
                 ],
             ],
             ui.main(cls="layout")[
                 # 左侧：指令控制台
                 ui.section(cls="console")[
-                    ui.div(cls="panel-head")[ui.span(cls="tick"), "指令控制台"],
+                    ui.div(cls="panel-head")[ui.span(cls="tick"), T("console_title")],
                     ui.div(id="chat-msgs", cls="chat-msgs"),
                     ui.div(id="agent-status", cls="agent-status")[
-                        ui.span(cls="dot"), "待命"],
+                        ui.span(cls="dot"), T("standby")],
                     ui.div(cls="composer")[
                         ui.input(id="chat-input", cls="chat-input",
-                                 placeholder="用自然语言下达指令，例如：查看系统状态 / 把 foo.deb 预置配置后重打包"),
+                                 placeholder=T("placeholder")),
                         ui.button("发送", cls="send",
                                   onclick="PHW.route('chat_send',{value:document.querySelector('#chat-input').value})"),
                     ],
                 ],
                 # 右侧：系统概览仪表盘
                 ui.aside(cls="dashboard")[
-                    ui.div(cls="panel-head")[ui.span(cls="tick"), "系统概览"],
+                    ui.div(cls="panel-head")[ui.span(cls="tick"), T("dash_title")],
                     ui.div(id="dashboard-body", cls="dash-body")[
-                        ui.raw('<div class="muted center">登录后自动加载系统概览…</div>')],
+                        ui.raw('<div class="muted center">' + _esc(T("dash_title")) + '…</div>')],
                     ui.div(cls="dash-foot")[
                         ui.div(cls="card")[
-                            ui.h3("能力"),
+                            ui.h3(T("cap_title")),
                             ui.div(cls="caps")[
                                 ui.div(cls="cap")[ui.strong("system_run_cmd"),
-                                                 ui.span("执行命令（高危需确认）")],
+                                                 ui.span(T("cap_run_cmd"))],
                                 ui.div(cls="cap")[ui.strong("system_status"),
-                                                 ui.span("只读状态")],
+                                                 ui.span(T("cap_status"))],
                                 ui.div(cls="cap")[ui.strong("files_read/write"),
-                                                 ui.span("文件读写")],
+                                                 ui.span(T("cap_files"))],
                                 ui.div(cls="cap")[ui.strong("pkg_inspect"),
-                                                 ui.span("查看包")],
+                                                 ui.span(T("cap_inspect"))],
                                 ui.div(cls="cap")[ui.strong("pkg_repack_*"),
-                                                 ui.span("重打包（签名失效）")],
+                                                 ui.span(T("cap_repack"))],
                                 ui.div(cls="cap")[ui.strong("pkg_rollback"),
-                                                 ui.span("回滚（高危）")],
+                                                 ui.span(T("cap_rollback"))],
                             ],
                         ],
                     ],
@@ -585,40 +678,69 @@ class AgentPanel:
             # 配置抽屉
             ui.div(id="cfg-drawer", cls="drawer hidden")[
                 ui.div(cls="drawer-head")[
-                    ui.h3("LLM 配置"),
+                    ui.h3(T("cfg_title")),
                     ui.button("✕", cls="ghost", onclick="cfg_close"),
                 ],
-                ui.label("Base URL"),
+                ui.label(T("preset_label")),
+                _preset_select(),
+                ui.label(T("lbl_base")),
                 ui.input(id="cfg-base", placeholder="https://api.deepseek.com/v1", oninput="cfg_base"),
-                ui.label("API Key"),
+                ui.label(T("lbl_key")),
                 ui.input(id="cfg-key", type="password", placeholder="sk-...", oninput="cfg_key"),
-                ui.label("模型"),
+                ui.label(T("lbl_model")),
                 ui.input(id="cfg-model", list="models-list", placeholder="deepseek-chat", oninput="cfg_model"),
                 ui.datalist(id="models-list"),
                 ui.label(cls="chk")[
                     ui.input(id="cfg-mock", type="checkbox",
                              onclick="PHW.route('cfg_mock',{value:document.querySelector('#cfg-mock').checked})"),
-                    "无 Key 演示模式",
+                    T("lbl_mock"),
                 ],
                 ui.div(cls="drawer-actions")[
-                    ui.button("检测连接", onclick="cfg_test"),
-                    ui.button("保存", cls="primary", onclick="cfg_save"),
+                    ui.button(T("btn_test"), onclick="cfg_test"),
+                    ui.button(T("btn_save"), cls="primary", onclick="cfg_save"),
                 ],
                 ui.div(id="cfg-msg", cls="cfg-msg"),
                 ui.div(cls="hint")[
-                    "想自定义登录密码？在 VM 控制台执行：", ui.br(),
-                    "python3 /opt/agentbook/server.py --set-password 你的密码", ui.br(),
-                    "重启服务后生效：rc-service agentbook restart",
+                    _esc(T("hint_title")), ui.br(),
+                    ui.pre(cls="res", style="margin-top:6px")[T("hint_cmd")], ui.br(),
+                    _esc(T("hint_restart")),
+                ],
+            ],
+            # 新手引导
+            ui.div(id="wizard-overlay", cls="overlay hidden")[
+                ui.div(cls="login-card", style="width:430px;text-align:left")[
+                    ui.h2(T("wizard_title")),
+                    ui.div(cls="wiz-step")[
+                        ui.strong(T("wizard_step1")),
+                        ui.div(cls="muted")[
+                            _esc(T("wizard_pw")),
+                            ui.pre(cls="res", style="margin-top:6px")[T("hint_cmd")],
+                        ],
+                    ],
+                    ui.div(cls="wiz-step")[
+                        ui.strong(T("wizard_step2")),
+                        ui.div(cls="muted")[T("wizard_api")],
+                    ],
+                    ui.div(cls="wiz-step")[
+                        ui.strong(T("wizard_step3")),
+                        ui.div(cls="chips", style="margin-top:8px")[
+                            "".join(
+                                f'<button class="example-chip" onclick="PHW.route(\'chat_send\',{{value:{json.dumps(p)}}})">{_esc(p)}</button>'
+                                for p in i18n_mod.EXAMPLE_PROMPTS)
+                        ],
+                    ],
+                    ui.button(T("wizard_close"), cls="primary",
+                              style="width:100%;margin-top:14px", onclick="wizard_close"),
                 ],
             ],
             # 登录遮罩
             ui.div(id="login-overlay", cls="overlay")[
                 ui.div(cls="login-card")[
                     ui.div(cls="lk")["🐜"],
-                    ui.h2("AgentBook 面板"),
-                    ui.p("输入控制台密码登录"),
-                    ui.input(id="login-pw", type="password", placeholder="密码"),
-                    ui.button("登录", cls="primary",
+                    ui.h2(T("login_title")),
+                    ui.p(T("login_prompt")),
+                    ui.input(id="login-pw", type="password", placeholder=T("login_pw")),
+                    ui.button(T("login_btn"), cls="primary",
                               onclick="PHW.route('login',{value:document.querySelector('#login-pw').value})"),
                     ui.div(id="login-msg", cls="cfg-msg"),
                 ],

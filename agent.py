@@ -30,8 +30,9 @@ SYSTEM_PROMPT = (
 MAX_TOOL_RESULT = 4000
 
 
-def _llm_chat(cfg: dict, messages: list, stream: bool = False):
-    """调用 /v1/chat/completions，返回解析后的 dict 或抛异常。"""
+def _llm_chat_stream(cfg: dict, messages: list, emit, assistant_msg: dict):
+    """stream:True 调用：逐块 emit('token', piece) 并原地写入 assistant_msg['content']；
+    返回完整 assistant message（含跨 chunk 聚合后的 tool_calls）。异常向上抛，由 run_chat 统一处理。"""
     base = (cfg.get("llm_base_url") or "").rstrip("/")
     key = cfg.get("llm_api_key") or ""
     if not base or "://" not in base:
@@ -42,17 +43,57 @@ def _llm_chat(cfg: dict, messages: list, stream: bool = False):
         "messages": messages,
         "tools": tools_mod.TOOL_SCHEMAS,
         "tool_choice": "auto",
-        "stream": False,
+        "stream": True,
     }
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url, data=data,
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {key}",
-                 "User-Agent": "agentbook"},
+                 "User-Agent": "agentbook",
+                 "Accept": "text/event-stream"},
     )
+    tool_acc = {}  # index -> {id, name, arguments}（流式工具调用需跨 chunk 聚合）
     with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.loads(resp.read().decode("utf-8", errors="replace"))
+        for raw in resp:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                obj = json.loads(payload)
+            except Exception:
+                continue
+            choices = obj.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            piece = delta.get("content") or ""
+            if piece:
+                assistant_msg["content"] += piece
+                emit("token", piece)
+            for tc in (delta.get("tool_calls") or []):
+                idx = tc.get("index", 0)
+                slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["name"] += fn["name"]
+                if fn.get("arguments"):
+                    slot["arguments"] += fn["arguments"]
+    tool_calls = []
+    if tool_acc:
+        for idx in sorted(tool_acc):
+            slot = tool_acc[idx]
+            tool_calls.append({
+                "id": slot["id"] or f"call_{idx}",
+                "type": "function",
+                "function": {"name": slot["name"], "arguments": slot["arguments"]},
+            })
+    return {"role": "assistant", "content": assistant_msg["content"], "tool_calls": tool_calls}
 
 
 def _truncate(s: str, n: int = MAX_TOOL_RESULT) -> str:
@@ -191,19 +232,18 @@ def run_chat(messages: list, cfg: dict, emit):
         messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
         conv = messages
 
+    # 流式：先放一个 assistant 占位，流式过程中原地填充内容并逐 token 渲染
+    assistant_msg = {"role": "assistant", "content": ""}
+    conv.append(assistant_msg)
     try:
         for _ in range(8):  # 最多 8 轮工具调用
-            resp = _llm_chat(cfg, conv)
-            choice = resp["choices"][0]["message"]
-            conv.append(choice)
-
-            tool_calls = choice.get("tool_calls") or []
+            acc = _llm_chat_stream(cfg, conv, emit, assistant_msg)
+            tool_calls = acc.get("tool_calls") or []
             if not tool_calls:
-                answer = choice.get("content") or ""
-                emit("token", answer)
-                emit("done", {"answer": answer})
+                emit("done", {"answer": assistant_msg["content"]})
                 return conv
 
+            assistant_msg["tool_calls"] = tool_calls
             for tc in tool_calls:
                 fn = tc.get("function", {})
                 name = fn.get("name", "")
@@ -220,6 +260,9 @@ def run_chat(messages: list, cfg: dict, emit):
                 emit("tool", {"name": name, "args": args,
                               "result": _truncate(json.dumps(res, ensure_ascii=False)),
                               "status": res.get("status")})
+            # 下一轮：新建 assistant 占位（承接下一轮文本/工具）
+            assistant_msg = {"role": "assistant", "content": ""}
+            conv.append(assistant_msg)
         # 工具循环超限，强制收尾
         emit("token", "（工具调用次数已达上限，停止以免失控）")
         emit("done", {"answer": "（工具调用次数已达上限，停止以免失控）"})

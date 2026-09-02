@@ -15,6 +15,7 @@ import json
 import time
 import socket
 import subprocess
+import tempfile
 
 PY = os.environ.get("PY", sys.executable)
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,10 @@ PORT = free_port()
 os.environ["AN_WEB_PORT"] = str(PORT)
 os.environ["AN_WEB_HOST"] = "0.0.0.0"
 os.environ["AN_AGENT_PASSWORD"] = "smoke-test-pass"
+
+# 隔离数据目录：用临时目录当数据盘，避免读取本机 config.json（可能已持久化
+# ui_lang=en）导致默认语言变英文、断言的中文文案对不上。临时目录里无 ui_lang → 默认 zh。
+os.environ["AN_WEB_DIR"] = tempfile.mkdtemp(prefix="agentbook-smoke-")
 
 passed = []
 

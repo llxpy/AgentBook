@@ -1,0 +1,25 @@
+# AgentBook · Docker 一键分发
+# 用法：
+#   1)（可选）新建 .env 设首次密码：echo "AN_AGENT_PASSWORD=你的密码" > .env
+#   2) docker compose up -d --build
+#   3) 浏览器开 http://<本机IP>:8080/
+# 数据（密码 / API Key / 配置）存在命名卷 agentbook-data，重建容器不丢。
+services:
+  agentbook:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+    image: agentbook:latest
+    container_name: agentbook
+    ports:
+      - "8080:8080"
+    environment:
+      AN_WEB_HOST: "0.0.0.0"
+      AN_WEB_PORT: "8080"
+      AN_AGENT_PASSWORD: "${AN_AGENT_PASSWORD:-}"
+    volumes:
+      - agentbook-data:/data
+    restart: always
+
+volumes:
+  agentbook-data:
