@@ -147,6 +147,40 @@ Alpine **仓库没有** `dpkg-dev` / `rpmrebuild`。Agent 仍能在 Alpine 上�
 - 所有动作写审计日志 `state/audit.log`。
 - 登录密码随机生成、独立存储；生产环境建议前置反向代理 + TLS。
 
+## 公网暴露：nginx 反向代理 + TLS（标准 include）
+
+仓库里已放好**可直接 include / symlink** 的 nginx 配置，不用自己手敲、不会因漏配踩坑：
+
+```
+deploy/nginx/agentbook.conf        # 标准 vhost：80 → 301 跳 HTTPS + 443 TLS 反代
+deploy/nginx/agentbook-http.conf   # 纯 HTTP（内网 / 已有 TLS 终止时用，勿公网直暴露）
+```
+
+**用法（装完 AgentBook 后）：**
+
+```bash
+# 1) 软链启用（Debian/Ubuntu/RHEL 系 nginx 默认扫 /etc/nginx/sites-enabled/）
+sudo ln -s /opt/agentbook/deploy/nginx/agentbook.conf /etc/nginx/sites-enabled/agentbook.conf
+
+# 2) 把配置里两处 server_name 改成你的域名，ssl_certificate* 改成你的证书路径
+#    （有域名且走 certbot，直接一步到位，它会自动改好证书路径：
+#     sudo certbot --nginx -d 你的域名）
+
+# 3) 校验 + 重载
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+配置已处理好的关键细节（新手最容易漏的坑）：
+
+- **SSE 实时推送**（`/api/events`）必须 `proxy_buffering off`，否则仪表盘自动刷新 /
+  对话流式 token 会被缓冲卡死——这份配置已默认关掉缓冲、拉长 `proxy_read_timeout`。
+- **Cookie 鉴权**（`an_token`）由后端 `Set-Cookie` 自动透传，nginx 无需任何额外配置。
+- 透传 `X-Real-IP` / `X-Forwarded-For` / `X-Forwarded-Proto`，后端能拿到真实客户端信息。
+- TLS 用 Mozilla 中间档（TLS1.2/1.3 + 现代 cipher + OCSP 装订 + HSTS），`nginx -t` 干净。
+
+> 前置 nginx 后，云服务器安全组只需放行 **80/443**，原 8080 可只留本机
+> （AgentBook 仍绑 `0.0.0.0:8080`，若要只听本机可设 `AN_WEB_HOST=127.0.0.1`）。
+
 ## 文件结构
 
 ```
@@ -166,6 +200,9 @@ AgentBook/
     mkiso.py            纯 Python ISO9660 生成器（零依赖）
     firstboot.sh        VM 内一键装机脚本（挂在配置光盘里）
     answerfile          setup-alpine 手动应答文件
+  deploy/nginx/         nginx 反向代理配置（标准 include / symlink 即用）：
+    agentbook.conf      80→HTTPS 跳转 + 443 TLS 反代（SSE 已关缓冲）
+    agentbook-http.conf 纯 HTTP 版（内网 / 已有 TLS 终止时用）
   smoke_test.py         端到端冒烟测试（HTTP 层 + 工具层，mock 模式免 Key）
 ```
 > systemd 单元 `/etc/systemd/system/agentbook.service` 由 `install.sh` 运行时生成
