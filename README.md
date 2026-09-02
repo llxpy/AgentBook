@@ -77,37 +77,89 @@
 
 ---
 
-## 部署方式
+## 部署方式（从零开始，给别人看）
 
-### 通用 Linux 安装（推荐：云服务器 / 裸机）
+### 开始前你需要
+
+- 一台 **Linux 机器**（云服务器 / 本地 VM / 树莓派都行），能用 SSH 或控制台登进去。
+- **root 或 sudo 权限**（通用安装 / VM 方式需要）。
+- 走 Docker 方式则本机已装好 **Docker + docker compose 插件**。
+- 一个 **LLM API Key**（DeepSeek / OpenAI / 任意 OpenAI 兼容端点）。不配也能跑演示模式，但没法真调 LLM。
+
+### 我该选哪种？
+
+| 你的场景 | 选这个 |
+|---|---|
+| 有台独立 Linux，想要开机自启、长期用 | **通用 Linux 安装**（推荐） |
+| 本机 / NAS 已有 Docker，想一条命令起 | **Docker 一键分发** |
+| 只想在自己电脑上 5 分钟试一下 | **本地开发运行** |
+| 想烧一台专属 Alpine VM 镜像 | **嵌入 Alpine VM**（进阶） |
+
+---
+
+### 通用 Linux 安装（推荐）
+
 ```bash
-git clone <你的仓库地址> AgentBook
+# 1. 拉代码
+git clone https://github.com/llxpy/AgentBook.git
 cd AgentBook
-sudo ./install.sh                          # 装 python3 + 注册开机自启 + 启动
-# 非交互指定密码：sudo ./install.sh --password 你的密码
-# 或环境变量：AN_AGENT_PASSWORD=你的密码 sudo -E ./install.sh
+
+# 2. 一条命令安装并启动（自动装 python3、注册开机自启服务、立刻起服务）
+sudo ./install.sh
+#    想一开始就定好登录密码，加 --password：
+sudo ./install.sh --password 你的密码
 ```
-安装器发行版无关（apt/dnf/yum/apk/pacman + systemd/OpenRC），识别不到 init 时回退 `nohup`。
-装完打印本机 IP；云服务器记得**安全组放行 8080**；公网建议前置 nginx + TLS（见下）。
+
+装完脚本会打印：**监听地址、本机 IP、访问地址、首次密码来源**。
+
+下一步：
+1. 云服务器：去**安全组 / 防火墙放行 8080 端口（TCP 入站）**。
+2. 浏览器打开 `http://<上面打印的IP>:8080/`。
+3. 首次密码：脚本已打印；也可 `sudo tail -n 20 /var/log/agentbook.log` 再看。
+4. 公网暴露建议前置 nginx + TLS（见下方「公网暴露」）。
+
+> 安装器发行版无关：Debian/Ubuntu/RHEL（systemd）、Alpine（OpenRC）、Arch（pacman）都能跑；
+> 识别不到 init 系统时自动回退为 `nohup` 后台进程（不注册开机自启）。
 
 ### Docker 一键分发
+
+前置：先装好 Docker 与 docker compose 插件（官方文档：https://docs.docker.com/get-docker/）。
+
 ```bash
+# 1. 拉代码
+git clone https://github.com/llxpy/AgentBook.git
+cd AgentBook
+
+# 2. （可选）设首次登录密码；不设则随机生成
 echo "AN_AGENT_PASSWORD=你的密码" > .env
+
+# 3. 起服务
 docker compose up -d --build
 ```
-镜像 `python:3-slim`、**零 pip 依赖**；密码/Key/配置全在命名卷 `agentbook-data`（容器内 `/data`），
-重建容器不丢、**镜像本身不含密钥**；`restart: always` 崩溃/重启自动拉起。
+
+下一步：
+1. 浏览器打开 `http://<这台机器的IP>:8080/`（本机就是 `http://127.0.0.1:8080/`）。
+2. 忘了随机密码：`docker logs agentbook` 看启动日志里的「首次登录密码」。
+3. 数据（密码 / Key / 配置）存在命名卷 `agentbook-data`，重建容器不丢；**镜像本身不含任何密钥**。
+4. `restart: always`：崩溃或宿主机重启自动拉起。
 
 ### 本地开发运行
+
+适合在自己电脑上快速试，不需要 root、不需要 Docker。
+
 ```bash
 cd AgentBook
 python3 server.py        # 打开 http://127.0.0.1:8080/ ；未配 Key 自动演示模式
 ```
-环境变量：`AN_AGENT_PASSWORD` / `AN_WEB_HOST` / `AN_WEB_PORT`（默认 0.0.0.0:8080）。
 
-### 嵌入 Alpine VM（alpine-virt ISO）
-**方式 A 手动**：ISO 起 VM → `setup-alpine` 装磁盘 → 拷项目进 VM → `sh service/install.sh` → 浏览器进。
-**方式 B 一键烧录**（需 QEMU）：`bash build/build_alpine_vm.sh <alpine-virt.iso> agentbook-vm`，产出 qcow2。
+可用环境变量：`AN_AGENT_PASSWORD`（登录密码）、`AN_WEB_HOST`、`AN_WEB_PORT`（默认 0.0.0.0:8080）。
+改密码：`python3 server.py --set-password 你的密码`（重启生效）。
+
+### 嵌入 Alpine VM（进阶）
+
+把 AgentBook 烧进一台独立 Alpine VM，开机即从磁盘起、自动跑服务。
+**方式 A 手动**：alpine-virt ISO 起 VM → `setup-alpine` 装到磁盘 → 拷项目进 VM → `sh service/install.sh`。
+**方式 B 一键烧录**（需本机有 QEMU）：`bash build/build_alpine_vm.sh <alpine-virt.iso> agentbook-vm`，产出 qcow2。
 **方式 C VMware**（无需 QEMU）：`bash build/vmware/build_vmware_vm.sh <alpine-virt.iso> agentbook-vm`，
 产出 `.vmx` + 配置 ISO；VMware 打开 `.vmx` → 首启从 CD-ROM 进 live → `sh /media/cdrom1/FIRSTBOO.SH` 一键装机 →
 移除两张 ISO 重启。配置盘挂不上时用 HTTP 兜底：宿主在 `build/vmware/agentbook-vm` 起
