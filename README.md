@@ -5,21 +5,58 @@
 完全独立。
 
 > 来源：把《deb_rpm 安装包修改工具横评与预置配置免交互部署方案》里的 9 类白名单动作
-> 变成了这个 Agent 的「工具集」——你说"把 foo.deb 预置配置后重打包"，它就调 `pkg.repack_deb`。
+> 变成了这个 Agent 的「工具集」——你说"把 foo.deb 预置配置后重打包"，它就调 `pkg_repack_deb`。
 
 ## 能力
 
-- **对话页**：自然语言 → Agent → 工具调用 → 结果。支持 OpenAI 兼容端点（DeepSeek / 本地 vLLM / Ollama）。
+- **对话页**：自然语言 → Agent → 工具调用 → 结果。**真流式输出**（LLM 逐 token 实时推送，
+  不是等全部生成完才返回）。支持 OpenAI 兼容端点（DeepSeek / 本地 vLLM / Ollama）。
 - **状态页**：实时显示内核 / uptime / 负载 / 内存 / 磁盘 / 监听端口 / 运行服务 / 工具链可用性。
 - **工具集**（受护栏）：
-  - `system.run_cmd` — 执行命令（灾难性命令拒绝；sudo/rm -rf/格式化/改系统服务需界面确认）
-  - `system.status` — 只读状态
-  - `files.read` / `files.write` — 文件读写（系统关键路径需确认）
-  - `pkg.inspect` — 查看 .deb/.rpm 控件/文件/脚本
-  - `pkg.install_test` — disposable 预检（不真装）
-  - `pkg.repack_deb` / `pkg.repack_rpm` — 基于现有包重打包（**原签名失效，需重签**）
-  - `pkg.rollback` — 回滚/重装（L3，需确认）
+  - `system_run_cmd` — 执行命令（灾难性命令拒绝；sudo/rm -rf/格式化/改系统服务需界面确认）
+  - `system_status` — 只读状态
+  - `files_read` / `files_write` — 文件读写（系统关键路径需确认）
+  - `pkg_inspect` — 查看 .deb/.rpm 控件/文件/脚本
+  - `pkg_install_test` — disposable 预检（不真装）
+  - `pkg_repack_deb` / `pkg_repack_rpm` — 基于现有包重打包（**原签名失效，需重签**）
+  - `pkg_rollback` — 回滚/重装（L3，需确认）
 - **登录**：首次启动随机生成密码，打印到服务日志；支持 token 会话。
+- **多语言**：面板内置中文 / English 切换（顶栏下拉），选择持久化，刷新即生效。
+- **新手引导**：首次登录弹出三步向导（选供应商预设 → 填 Key → 点示例提示直接试），小白零门槛上手。
+
+## 首次使用（登录后必看）
+
+无论用哪种方式装好、浏览器进 `http://<IP>:8080/` 后，流程都一样：
+
+### 1. 新手引导向导
+
+登录成功会自动弹出向导遮罩，三步带你配好：
+
+1. **选供应商预设**：`custom` / `openai` / `deepseek` / `ollama`。选完自动把
+   `Base URL` 和`模型`填进配置框（custom 留空自己填）。
+2. **填 API Key**：把你的 Key 贴进输入框（Key 单独存 `config.json.key`，不进 `config.json`、不进 git）。
+3. **点示例提示试试**：向导里的 chips（`查看系统状态` / `执行 uname -a` / `列出监听端口`）
+   一点就直接发一条消息，立刻看到流式回复 + 工具调用。
+
+关掉向导后，随时可在右上角「API 配置」抽屉里重配；抽屉里也有同样的预设下拉。
+
+### 2. 配 LLM API（预设 + 检测连接）
+
+在「API 配置」抽屉：
+
+- **预设下拉**：选供应商一键带出 Base URL / 模型，不用手敲。
+- **检测连接**按钮：点一下调后端 `POST /api/config/test`——先试 OpenAI 兼容 `/models`，
+  失败再退化最小 chat 探活，返回连通状态 + 可用模型列表。不通会明确报错（不会静默卡死）。
+- **模型列表**：检测连接后自动拉取并填入 `<datalist>`，也可手输。
+- **保存**：点保存写入 `config.json`（Key 写 `config.json.key`，权限 0600）。
+
+> 没配 Key 也能玩：未配置 API Key 时自动进入**演示模式**（mock），
+> 跑 `system_status` / `system_run_cmd` 的演示闭环，看交互但不真调 LLM。
+
+### 3. 多语言切换
+
+顶栏右下角语言下拉选 `中文` / `English`，选择写入 `config.json.ui_lang`，刷新页面即生效，
+重启服务也保持。
 
 ## 通用 Linux 安装（推荐：云服务器 / 裸机）
 
@@ -53,8 +90,8 @@ python3 server.py
 # 打开 http://127.0.0.1:8080/ ；未配 API Key 时自动进入演示模式
 ```
 
-配置 LLM：登录后点「API 配置」填 Base URL / 模型 / Key，或在环境变量里给：
-`AN_AGENT_PASSWORD`（登录密码）、`AN_WEB_HOST`、`AN_WEB_PORT`（默认 0.0.0.0:8080）。
+环境变量：`AN_AGENT_PASSWORD`（登录密码）、`AN_WEB_HOST`、`AN_WEB_PORT`（默认 0.0.0.0:8080）。
+CLI 改密码：`python3 server.py --set-password 你的密码`（重启生效）。
 
 ## 嵌入 Alpine VM（目标：alpine-virt ISO）
 
@@ -105,9 +142,9 @@ bash build/vmware/build_vmware_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso agen
 
 **配置盘挂不上时的可靠兜底（HTTP）**：VMware 对第二张 IDE 光驱识别有时不稳定，
 可改用宿主 HTTP 把文件喂进 VM（`FIRSTBOO.SH` / `AGENTBOOK.TGZ` 已落盘到 VM 目录）：
-1. 宿主（Win）起服务：
+1. 宿主起服务（在项目下的 `build/vmware/agentbook-vm` 目录）：
    ```bat
-   cd E:\Linux_Agent\AgentBook\build\vmware\agentbook-vm
+   cd build/vmware/agentbook-vm
    python3 -m http.server 8000
    ```
 2. VM 里先确认有网（VMware NAT 下自动拿 DHCP）；没有就 `udhcpc -i eth0`，再 `ip route` 看网关即宿主 IP。
@@ -123,7 +160,7 @@ bash build/vmware/build_vmware_vm.sh /path/to/alpine-virt-3.24.1-x86_64.iso agen
 Alpine **仓库没有** `dpkg-dev` / `rpmrebuild`。Agent 仍能在 Alpine 上跑命令、看状态、
 读文件；但真正的 `.deb` / `.rpm` 重打包需要 Debian / RHEL 系工具链。
 
-`pkg.repack_deb` / `pkg.repack_rpm` 是**容器感知**的，按以下顺序自动决策：
+`pkg_repack_deb` / `pkg_repack_rpm` 是**容器感知**的，按以下顺序自动决策：
 
 1. **宿主机有工具链**（`dpkg-deb` / `rpmrebuild`）→ 直接在本机改包（最快、最干净）。
 2. **宿主机没有，但装了 `podman` / `docker`** → 自动在 disposable 的
@@ -145,7 +182,7 @@ Alpine **仓库没有** `dpkg-dev` / `rpmrebuild`。Agent 仍能在 Alpine 上�
 - 灾难性命令（删根、格式化、写设备、关机）直接拒绝。
 - 高危命令需用户在前端点「确认」才执行（`needs_confirm`）。
 - 所有动作写审计日志 `state/audit.log`。
-- 登录密码随机生成、独立存储；生产环境建议前置反向代理 + TLS。
+- 登录密码随机生成、独立存储；生产环境建议前置反向代理 + TLS（明文 HTTP 下密码以 Cookie 明文传输）。
 
 ## 公网暴露：nginx 反向代理 + TLS（标准 include）
 
@@ -203,16 +240,45 @@ docker compose up -d --build
 > 涉及 `.deb/.rpm` 重打包时，容器内可 `apk add podman` 或用宿主机 docker
 > （`AN_IMG_DEB` / `AN_IMG_RPM` 覆盖镜像），走研究里的「disposable 容器改包」路径。
 
+## 常见问题
+
+**忘了登录密码？**
+控制台执行 `python3 server.py --set-password 你的密码`（restart 生效）；
+或直接读服务机上的 `state/agent_password`（权限 0600，首次启动自动生成）。
+
+**流式输出卡住 / 不动？**
+直连 `http://<IP>:8080/` 正常、走 nginx 才卡 → 是反代缓冲问题，确认 nginx 配了
+`proxy_buffering off`（仓库 `deploy/nginx/agentbook.conf` 已默认关）。
+
+**配了 API 但对话报 HTTP 400？**
+- 检查 `Base URL` 是否带了 `/v1`（OpenAI 兼容端点通常要）。
+- 工具名已用下划线（`system_run_cmd` 等），若你自接了别的网关需对齐。
+- 点「检测连接」先验证端点/Key 是否通。
+
+**改包提示"无工具链"？**
+Alpine 没有 `dpkg-dev`/`rpmrebuild`。在 VM 里 `apk add podman`（走容器内 disposable 改包），
+或直接把 AgentBook 装到 Debian / RHEL 系 VM。
+
+**8080 端口被占用？**
+起服务前设 `AN_WEB_PORT=9000`（Docker 同理改 `ports:` 映射）。
+
+**只想本机访问、前置 nginx？**
+设 `AN_WEB_HOST=127.0.0.1`，让 AgentBook 只听回环，由 nginx 对外。
+
+**重置配置？**
+删 `config.json` + `state/`（保留 `state/agent_password` 可不改密码）；重启后回到默认 + 向导。
+
 ## 文件结构
 
 ```
 AgentBook/
   server.py        HTTP 服务启动器（PHtmlWin 通用面板，绑 0.0.0.0:8080）
-  agent.py         Agent 循环 + OpenAI 兼容 LLM 客户端（含 mock 模式）
-  tools.py         工具集 + 护栏注册表 + OpenAI function schema
+  agent.py         Agent 循环 + OpenAI 兼容 LLM 客户端（真流式 SSE + mock 模式）
+  tools.py         工具集 + 护栏注册表 + OpenAI function schema（工具名下划线）
   guard.py         命令护栏（禁用/需授权模式）
-  config.py        LLM 配置 + Key / 密码分离存储
+  config.py        LLM 配置 + Key / 密码分离存储（ui_lang 持久化）
   panel.py         AgentPanel（ui.* DSL 描述界面 + @route 绑定事件，暗面构建主题）
+  i18n.py          中英双语字典（69 key 对齐）+ 供应商预设 + 示例提示
   phtmlwin.py      PHtmlWin（vendored：浏览器回退模式，零三方依赖）
   service/install.sh        通用安装器（apt/dnf/yum/apk/pacman + systemd/OpenRC）
   service/agentbook       OpenRC 服务单元（Alpine 用）
@@ -237,8 +303,8 @@ AgentBook/
 
 ```bash
 export PY=python3
-$PY smoke_test.py          # 启动服务→登录/SSE→工具层（护栏/repack/dispatch）共 18 项
+$PY smoke_test.py          # 启动服务→登录/SSE→工具层（护栏/repack/dispatch）共 19 项
 ```
 
-无需外部 LLM Key：对话走 mock 模式（`system.status` / `system.run_cmd` 演示闭环），
+无需外部 LLM Key：对话走 mock 模式（`system_status` / `system_run_cmd` 演示闭环），
 但登录鉴权、SSE 流式、护栏 deny/needs_confirm、repack 容器感知指引、dispatch 路由都是真路径。
